@@ -8,7 +8,7 @@ import requests
 from telegram import Bot
 
 # =========================
-# Telegram 設定
+# Telegram
 # =========================
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -17,11 +17,14 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 
 # =========================
-# 模擬設定
+# 策略設定
 # =========================
 
-TAKE_PROFIT = 1.20
-STOP_LOSS = 0.88
+TAKE_PROFIT = 1.35
+STOP_LOSS = 0.82
+
+MIN_LIQUIDITY = 12000
+MIN_VOLUME = 50000
 
 TOTAL_PNL = 0
 TOTAL_TRADES = 0
@@ -29,7 +32,7 @@ WINS = 0
 LOSSES = 0
 
 # =========================
-# Telegram 發送
+# Telegram
 # =========================
 
 def send_telegram(msg):
@@ -65,7 +68,6 @@ def get_trending_tokens():
         response = requests.get(url, timeout=10)
 
         if response.status_code != 200:
-            print("Dex API Error")
             return []
 
         data = response.json()
@@ -74,7 +76,7 @@ def get_trending_tokens():
 
         tokens = []
 
-        for pair in pairs[:10]:
+        for pair in pairs[:25]:
 
             try:
 
@@ -86,16 +88,29 @@ def get_trending_tokens():
                     pair.get("volume", {}).get("h24", 0)
                 )
 
+                price = float(pair.get("priceUsd", 0))
+
+                price_change = random.uniform(-20, 120)
+
+                age_minutes = random.randint(5, 240)
+
+                buys = random.randint(20, 500)
+                sells = random.randint(1, 120)
+
                 token = {
 
                     "name": pair["baseToken"]["name"],
                     "symbol": pair["baseToken"]["symbol"],
-                    "price": float(pair["priceUsd"]),
+                    "price": price,
                     "liquidity": liquidity,
                     "volume": volume,
-                    "chain": pair.get("chainId", "unknown"),
-                    "mint_enabled": False,
-                    "holders": random.randint(200, 5000)
+                    "price_change": price_change,
+                    "age_minutes": age_minutes,
+                    "buys": buys,
+                    "sells": sells,
+                    "holders": random.randint(150, 5000),
+                    "chain": pair.get("chainId", "solana"),
+                    "mint_enabled": False
 
                 }
 
@@ -113,18 +128,67 @@ def get_trending_tokens():
         return []
 
 # =========================
+# AI SCORE
+# =========================
+
+def calculate_score(token):
+
+    score = 0
+
+    # liquidity
+
+    if token["liquidity"] > 20000:
+        score += 20
+
+    if token["liquidity"] > 50000:
+        score += 15
+
+    # volume
+
+    if token["volume"] > 100000:
+        score += 20
+
+    if token["volume"] > 500000:
+        score += 20
+
+    # momentum
+
+    if token["price_change"] > 15:
+        score += 15
+
+    if token["price_change"] > 40:
+        score += 20
+
+    # early launch
+
+    if token["age_minutes"] < 60:
+        score += 15
+
+    # buy pressure
+
+    if token["buys"] > token["sells"] * 2:
+        score += 20
+
+    # holders
+
+    if token["holders"] > 300:
+        score += 10
+
+    return score
+
+# =========================
 # 安全檢查
 # =========================
 
 def is_safe(token):
 
-    if token["liquidity"] < 15000:
+    if token["liquidity"] < MIN_LIQUIDITY:
         return False
 
-    if token["volume"] < 50000:
+    if token["volume"] < MIN_VOLUME:
         return False
 
-    if token["holders"] < 250:
+    if token["holders"] < 150:
         return False
 
     if token["mint_enabled"]:
@@ -146,27 +210,35 @@ def simulate_trade(token):
     buy_price = token["price"]
 
     send_telegram(
-        f"""
-🚀 AUTO BUY
+f"""
+🚀 SNIPER ENTRY
 
 Name: {token['name']}
 Symbol: {token['symbol']}
-Chain: {token['chain']}
+
+AI Score: {token['score']}/100
 
 Liquidity: ${token['liquidity']:.0f}
-24h Volume: ${token['volume']:.0f}
+Volume: ${token['volume']:.0f}
 
-Buy Price: ${buy_price:.8f}
+Price Change: {token['price_change']:.2f}%
+Age: {token['age_minutes']} min
+
+Buy Pressure:
+{token['buys']} buys / {token['sells']} sells
+
+BUY PRICE:
+${buy_price:.8f}
 """
     )
 
     current_price = buy_price
 
-    for i in range(20):
+    for i in range(25):
 
         time.sleep(2)
 
-        movement = random.uniform(0.92, 1.12)
+        movement = random.uniform(0.90, 1.15)
 
         current_price *= movement
 
@@ -176,7 +248,7 @@ Buy Price: ${buy_price:.8f}
             f"[{token['symbol']}] Current: {current_price:.8f} | PnL: {pnl:.2f}%"
         )
 
-        # TAKE PROFIT
+        # take profit
 
         if current_price >= buy_price * TAKE_PROFIT:
 
@@ -185,8 +257,8 @@ Buy Price: ${buy_price:.8f}
             WINS += 1
 
             send_telegram(
-                f"""
-✅ TAKE PROFIT HIT
+f"""
+✅ TAKE PROFIT
 
 {token['symbol']}
 
@@ -196,14 +268,17 @@ Total Trades: {TOTAL_TRADES}
 Wins: {WINS}
 Losses: {LOSSES}
 
-Win Rate: {(WINS / TOTAL_TRADES) * 100:.2f}%
-Total PnL: {TOTAL_PNL:.2f}%
+Win Rate:
+{(WINS / TOTAL_TRADES) * 100:.2f}%
+
+Total PnL:
+{TOTAL_PNL:.2f}%
 """
             )
 
             return
 
-        # STOP LOSS
+        # stop loss
 
         if current_price <= buy_price * STOP_LOSS:
 
@@ -212,8 +287,8 @@ Total PnL: {TOTAL_PNL:.2f}%
             LOSSES += 1
 
             send_telegram(
-                f"""
-🛑 STOP LOSS HIT
+f"""
+🛑 STOP LOSS
 
 {token['symbol']}
 
@@ -223,8 +298,11 @@ Total Trades: {TOTAL_TRADES}
 Wins: {WINS}
 Losses: {LOSSES}
 
-Win Rate: {(WINS / TOTAL_TRADES) * 100:.2f}%
-Total PnL: {TOTAL_PNL:.2f}%
+Win Rate:
+{(WINS / TOTAL_TRADES) * 100:.2f}%
+
+Total PnL:
+{TOTAL_PNL:.2f}%
 """
             )
 
@@ -236,8 +314,7 @@ Total PnL: {TOTAL_PNL:.2f}%
 
 def main():
 
-    send_telegram("🧪 TEST MESSAGE")
-    send_telegram("🤖 Meme Sniper Bot Started")
+    send_telegram("🧪 ADVANCED SNIPER BOT STARTED")
 
     while True:
 
@@ -249,23 +326,30 @@ def main():
 
             for token in tokens:
 
+                token["score"] = calculate_score(token)
+
                 print(
-                    f"Checking {token['symbol']} | Liquidity ${token['liquidity']:.0f}"
+                    f"{token['symbol']} | Score {token['score']}"
                 )
 
-                if is_safe(token):
+                if not is_safe(token):
+                    continue
 
-                    print(
-                        f"SAFE => {token['symbol']} | Liquidity ${token['liquidity']:.0f}"
+                # Pump.fun 類型判定
+
+                if token["score"] >= 70:
+
+                    send_telegram(
+f"""
+🔥 PUMP DETECTED
+
+{token['symbol']}
+
+AI Score: {token['score']}
+"""
                     )
 
                     simulate_trade(token)
-
-                else:
-
-                    print(
-                        f"SKIP => {token['symbol']}"
-                    )
 
             time.sleep(30)
 
