@@ -1,857 +1,324 @@
-# =========================================================
-# ADVANCED REAL MARKET PAPER TRADING BOT
-# AUTO RECOVERY VERSION
-# REAL EXECUTION SIMULATION
-# =========================================================
-
-import os
-import time
-import random
-import threading
-import requests
-
 from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    ContextTypes
-)
+from telegram.ext import Application, CommandHandler, ContextTypes
+import asyncio
+import random
+from datetime import datetime
 
-# =========================================================
-# TELEGRAM
-# =========================================================
+# =========================
+# CONFIG
+# =========================
 
-TELEGRAM_BOT_TOKEN = os.getenv(
-    "TELEGRAM_BOT_TOKEN"
-)
+BOT_TOKEN = "YOUR_BOT_TOKEN"
+CHAT_ID = "YOUR_CHAT_ID"
 
-# =========================================================
-# SETTINGS
-# =========================================================
+TAKE_PROFIT = 60
+STOP_LOSS = -20
 
-TAKE_PROFIT = 1.28
-STOP_LOSS = 0.90
+MAX_CONSECUTIVE_LOSSES = 5
 
-SCAN_INTERVAL = 8
+# =========================
+# GLOBAL STATS
+# =========================
 
-MIN_LIQUIDITY = 25000
-MIN_VOLUME = 90000
+paper_trades = 0
+wins = 0
+losses = 0
+consecutive_losses = 0
+pnl_total = 0
+paused = False
 
-AI_SCORE_ENTRY = 75
+active_positions = {}
+trade_history = []
 
-MAX_ACTIVE_TRADES = 7
-MAX_TRADES_PER_DAY = 100
+# =========================
+# SAMPLE TOKENS
+# =========================
 
-# =========================================================
-# REAL EXECUTION SETTINGS
-# =========================================================
-
-BUY_SLIPPAGE_MIN = 1.01
-BUY_SLIPPAGE_MAX = 1.06
-
-SELL_SLIPPAGE_MIN = 0.94
-SELL_SLIPPAGE_MAX = 0.99
-
-RUG_SELL_FAIL_CHANCE = 0.12
-
-TRADE_TIMEOUT = 90
-
-MAX_CONSECUTIVE_LOSSES = 4
-
-DAILY_MAX_LOSS = -35
-
-AUTO_RECOVERY_SECONDS = 3600
-
-# =========================================================
-# GLOBALS
-# =========================================================
-
-TOTAL_TRADES = 0
-WINS = 0
-LOSSES = 0
-
-TOTAL_PNL = 0
-
-ACTIVE_TRADES = {}
-
-BOT_PAUSED = False
-
-TODAY_TRADES = 0
-
-CONSECUTIVE_LOSSES = 0
-
-BLACKLIST = [
-    "USDC",
-    "USDT",
-    "SOL",
-    "BONK"
+sample_tokens = [
+    "PEPEAI",
+    "BRAINCAT",
+    "DOGWIFAI",
+    "SIGMAGOBLIN",
+    "HYPERFROG",
+    "CHAOSCAT",
+    "MEMEENGINE",
+    "BASEDPEPE",
 ]
 
-# =========================================================
-# TELEGRAM COMMANDS
-# =========================================================
+# =========================
+# STATUS COMMAND
+# =========================
 
-async def status_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    winrate = 0
+    global paper_trades
+    global wins
+    global losses
+    global pnl_total
+    global consecutive_losses
+    global paused
 
-    if TOTAL_TRADES > 0:
+    total = wins + losses
 
-        winrate = (
-            WINS / TOTAL_TRADES
-        ) * 100
+    if total > 0:
+        winrate = (wins / total) * 100
+    else:
+        winrate = 0
 
-    msg = f"""
+    text = f"""
 📊 ADVANCED PAPER TRADING
 
-Trades:
-{TOTAL_TRADES}
+Trades: {paper_trades}
 
-Today:
-{TODAY_TRADES}
+Wins: {wins}
+Losses: {losses}
 
-Wins:
-{WINS}
+Win Rate: {winrate:.2f}%
 
-Losses:
-{LOSSES}
+PnL: {pnl_total:.2f}%
 
-Win Rate:
-{winrate:.2f}%
+Consecutive Losses: {consecutive_losses}
 
-PnL:
-{TOTAL_PNL:.2f}%
+Active Trades: {len(active_positions)}
 
-Consecutive Losses:
-{CONSECUTIVE_LOSSES}
-
-Active Trades:
-{len(ACTIVE_TRADES)}
-
-Paused:
-{BOT_PAUSED}
+Paused: {paused}
 """
 
-    await update.message.reply_text(msg)
+    await update.message.reply_text(text)
 
-# =========================================================
+# =========================
+# POSITIONS COMMAND
+# =========================
 
-async def pnl_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def positions(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    await update.message.reply_text(
-f"""
-💰 CURRENT PNL
-
-PnL:
-{TOTAL_PNL:.2f}%
-
-Trades:
-{TOTAL_TRADES}
-"""
-    )
-
-# =========================================================
-
-async def pause_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    global BOT_PAUSED
-
-    BOT_PAUSED = True
-
-    await update.message.reply_text(
-"""
-⏸ BOT PAUSED
-"""
-    )
-
-# =========================================================
-
-async def resume_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    global BOT_PAUSED
-    global CONSECUTIVE_LOSSES
-
-    BOT_PAUSED = False
-
-    CONSECUTIVE_LOSSES = 0
-
-    await update.message.reply_text(
-"""
-▶️ BOT RESUMED
-"""
-    )
-
-# =========================================================
-
-async def help_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    await update.message.reply_text(
-"""
-🤖 COMMANDS
-
-/status
-/pnl
-/pause
-/resume
-/help
-"""
-    )
-
-# =========================================================
-# MARKET SCAN
-# =========================================================
-
-def get_tokens():
-
-    try:
-
-        url = (
-            "https://api.dexscreener.com/latest/dex/search?q=pump"
-        )
-
-        response = requests.get(
-            url,
-            timeout=15
-        )
-
-        if response.status_code != 200:
-            return []
-
-        data = response.json()
-
-        pairs = data.get("pairs", [])
-
-        tokens = []
-
-        for pair in pairs[:250]:
-
-            try:
-
-                symbol = (
-                    pair["baseToken"]["symbol"]
-                )
-
-                if symbol in BLACKLIST:
-                    continue
-
-                liquidity = float(
-                    pair.get(
-                        "liquidity",
-                        {}
-                    ).get(
-                        "usd",
-                        0
-                    )
-                )
-
-                volume = float(
-                    pair.get(
-                        "volume",
-                        {}
-                    ).get(
-                        "h24",
-                        0
-                    )
-                )
-
-                buys = pair.get(
-                    "txns",
-                    {}
-                ).get(
-                    "h24",
-                    {}
-                ).get(
-                    "buys",
-                    0
-                )
-
-                sells = pair.get(
-                    "txns",
-                    {}
-                ).get(
-                    "h24",
-                    {}
-                ).get(
-                    "sells",
-                    0
-                )
-
-                price_change = float(
-                    pair.get(
-                        "priceChange",
-                        {}
-                    ).get(
-                        "h24",
-                        0
-                    )
-                )
-
-                token = {
-
-                    "symbol": symbol,
-
-                    "price":
-                    float(
-                        pair.get(
-                            "priceUsd",
-                            0
-                        )
-                    ),
-
-                    "liquidity":
-                    liquidity,
-
-                    "volume":
-                    volume,
-
-                    "buys":
-                    buys,
-
-                    "sells":
-                    sells,
-
-                    "price_change":
-                    price_change
-
-                }
-
-                tokens.append(token)
-
-            except:
-                continue
-
-        return tokens
-
-    except Exception as e:
-
-        print("SCAN ERROR:", e)
-
-        return []
-
-# =========================================================
-# AI SCORE
-# =========================================================
-
-def calculate_score(token):
-
-    score = 0
-
-    if token["liquidity"] > 25000:
-        score += 20
-
-    if token["liquidity"] > 60000:
-        score += 10
-
-    if token["volume"] > 90000:
-        score += 20
-
-    if token["volume"] > 400000:
-        score += 20
-
-    if token["price_change"] > 15:
-        score += 10
-
-    if token["buys"] > token["sells"]:
-        score += 20
-
-    return min(score, 100)
-
-# =========================================================
-# FILTER
-# =========================================================
-
-def is_safe(token):
-
-    if token["liquidity"] < MIN_LIQUIDITY:
-        return False
-
-    if token["volume"] < MIN_VOLUME:
-        return False
-
-    if token["buys"] <= token["sells"]:
-        return False
-
-    return True
-
-# =========================================================
-# LIVE PRICE
-# =========================================================
-
-def get_live_price(symbol):
-
-    try:
-
-        url = (
-            f"https://api.dexscreener.com/latest/dex/search?q={symbol}"
-        )
-
-        response = requests.get(
-            url,
-            timeout=10
-        )
-
-        if response.status_code != 200:
-            return None
-
-        data = response.json()
-
-        pairs = data.get("pairs", [])
-
-        if not pairs:
-            return None
-
-        price = float(
-            pairs[0].get(
-                "priceUsd",
-                0
-            )
-        )
-
-        return price
-
-    except:
-
-        return None
-
-# =========================================================
-# ADVANCED PAPER TRADE
-# =========================================================
-
-def simulate_trade(token):
-
-    global TOTAL_TRADES
-    global WINS
-    global LOSSES
-    global TOTAL_PNL
-    global TODAY_TRADES
-    global CONSECUTIVE_LOSSES
-    global BOT_PAUSED
-
-    if TOTAL_PNL <= DAILY_MAX_LOSS:
-
-        BOT_PAUSED = True
-
-        print("""
-🛑 DAILY LOSS LIMIT HIT
-""")
-
+    if not active_positions:
+        await update.message.reply_text("No active positions.")
         return
 
-    if CONSECUTIVE_LOSSES >= MAX_CONSECUTIVE_LOSSES:
+    text = "📈 ACTIVE POSITIONS\n\n"
 
-        BOT_PAUSED = True
+    for token, data in active_positions.items():
 
-        print("""
-🛑 MAX LOSING STREAK HIT
-""")
+        text += f"""
+Token: {token}
+Entry: {data['entry_price']}
+Current: {data['current_price']}
+Liquidity: ${data['liquidity']}
 
+"""
+
+    await update.message.reply_text(text)
+
+# =========================
+# HISTORY COMMAND
+# =========================
+
+async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not trade_history:
+        await update.message.reply_text("No trade history.")
         return
 
-    symbol = token["symbol"]
+    text = "📊 TRADE HISTORY\n\n"
 
-    if TODAY_TRADES >= MAX_TRADES_PER_DAY:
-        return
+    for trade in trade_history[-10:]:
 
-    if symbol in ACTIVE_TRADES:
-        return
+        emoji = "✅" if trade["pnl"] > 0 else "❌"
 
-    if len(ACTIVE_TRADES) >= MAX_ACTIVE_TRADES:
-        return
+        text += f"""
+{emoji} {trade['token']}
+PnL: {trade['pnl']:.2f}%
 
-    ACTIVE_TRADES[symbol] = True
+"""
 
-    TODAY_TRADES += 1
+    await update.message.reply_text(text)
 
-    market_price = token["price"]
+# =========================
+# PAUSE COMMAND
+# =========================
 
-    # =====================================================
-    # BUY SLIPPAGE
-    # =====================================================
+async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    buy_price = (
-        market_price *
-        random.uniform(
-            BUY_SLIPPAGE_MIN,
-            BUY_SLIPPAGE_MAX
-        )
-    )
+    global paused
 
-    highest = buy_price
+    paused = True
 
-    print(f"""
-🚀 BUY
+    await update.message.reply_text("⏸ Bot paused.")
 
-{symbol}
+# =========================
+# RESUME COMMAND
+# =========================
 
-MARKET:
-{market_price:.8f}
+async def resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-FILLED:
-{buy_price:.8f}
-""")
+    global paused
 
-    for _ in range(TRADE_TIMEOUT):
+    paused = False
 
-        time.sleep(5)
+    await update.message.reply_text("✅ Bot resumed.")
 
-        current = get_live_price(symbol)
+# =========================
+# SIMULATED TRADING LOOP
+# =========================
 
-        if current is None:
-            continue
+async def trading_loop(app):
 
-        # =================================================
-        # SELL SLIPPAGE
-        # =================================================
-
-        current = (
-            current *
-            random.uniform(
-                SELL_SLIPPAGE_MIN,
-                SELL_SLIPPAGE_MAX
-            )
-        )
-
-        # =================================================
-        # RUG FAIL
-        # =================================================
-
-        if current <= buy_price * 0.5:
-
-            if random.random() <= RUG_SELL_FAIL_CHANCE:
-
-                current *= 0.5
-
-        if current > highest:
-            highest = current
-
-        pnl = (
-            (
-                current / buy_price
-            ) - 1
-        ) * 100
-
-        print(f"""
-{symbol}
-
-ENTRY:
-{buy_price:.8f}
-
-CURRENT:
-{current:.8f}
-
-PNL:
-{pnl:.2f}%
-""")
-
-        # =================================================
-        # STOP LOSS
-        # =================================================
-
-        if current <= buy_price * STOP_LOSS:
-
-            TOTAL_TRADES += 1
-            LOSSES += 1
-
-            CONSECUTIVE_LOSSES += 1
-
-            TOTAL_PNL += pnl
-
-            print(f"""
-🛑 STOP LOSS
-
-{symbol}
-
-FINAL:
-{pnl:.2f}%
-""")
-
-            ACTIVE_TRADES.pop(symbol)
-
-            return
-
-        # =================================================
-        # TAKE PROFIT
-        # =================================================
-
-        if current >= buy_price * TAKE_PROFIT:
-
-            TOTAL_TRADES += 1
-            WINS += 1
-
-            CONSECUTIVE_LOSSES = 0
-
-            TOTAL_PNL += pnl
-
-            print(f"""
-✅ TAKE PROFIT
-
-{symbol}
-
-FINAL:
-{pnl:.2f}%
-""")
-
-            ACTIVE_TRADES.pop(symbol)
-
-            return
-
-        # =================================================
-        # MOON EXIT
-        # =================================================
-
-        if highest >= buy_price * 2:
-
-            trailing = highest * 0.72
-
-            if current <= trailing:
-
-                TOTAL_TRADES += 1
-                WINS += 1
-
-                CONSECUTIVE_LOSSES = 0
-
-                TOTAL_PNL += pnl
-
-                print(f"""
-🌕 MOON EXIT
-
-{symbol}
-
-FINAL:
-{pnl:.2f}%
-""")
-
-                ACTIVE_TRADES.pop(symbol)
-
-                return
-
-    # =====================================================
-    # TIME EXIT
-    # =====================================================
-
-    final_price = get_live_price(symbol)
-
-    if final_price:
-
-        final_price *= random.uniform(
-            SELL_SLIPPAGE_MIN,
-            SELL_SLIPPAGE_MAX
-        )
-
-        pnl = (
-            (
-                final_price / buy_price
-            ) - 1
-        ) * 100
-
-        TOTAL_TRADES += 1
-
-        if pnl > 0:
-
-            WINS += 1
-
-            CONSECUTIVE_LOSSES = 0
-
-        else:
-
-            LOSSES += 1
-
-            CONSECUTIVE_LOSSES += 1
-
-        TOTAL_PNL += pnl
-
-        print(f"""
-⏰ TIME EXIT
-
-{symbol}
-
-FINAL:
-{pnl:.2f}%
-""")
-
-    ACTIVE_TRADES.pop(symbol)
-
-# =========================================================
-# TRADING LOOP
-# =========================================================
-
-def trading_loop():
-
-    global BOT_PAUSED
-    global CONSECUTIVE_LOSSES
-
-    print("ADVANCED PAPER BOT STARTED")
+    global paper_trades
+    global wins
+    global losses
+    global pnl_total
+    global consecutive_losses
+    global paused
 
     while True:
 
         try:
 
-            # =============================================
-            # AUTO RECOVERY MODE
-            # =============================================
-
-            if BOT_PAUSED:
-
-                print(f"""
-⏸ BOT PAUSED
-
-AUTO RECOVERY:
-{AUTO_RECOVERY_SECONDS // 60} MINUTES
-""")
-
-                time.sleep(AUTO_RECOVERY_SECONDS)
-
-                BOT_PAUSED = False
-
-                CONSECUTIVE_LOSSES = 0
-
-                print("""
-▶️ AUTO RESUME
-""")
-
+            if paused:
+                await asyncio.sleep(15)
                 continue
 
-            # =============================================
-            # SCAN TOKENS
-            # =============================================
+            # RANDOM TOKEN
 
-            tokens = get_tokens()
+            token_name = random.choice(sample_tokens)
 
-            for token in tokens:
+            entry_price = round(random.uniform(0.00001, 0.001), 8)
 
-                if not is_safe(token):
-                    continue
+            liquidity = random.randint(5000, 100000)
 
-                score = calculate_score(
-                    token
+            # BUY
+
+            paper_trades += 1
+
+            active_positions[token_name] = {
+                "entry_price": entry_price,
+                "current_price": entry_price,
+                "liquidity": liquidity,
+                "timestamp": datetime.now()
+            }
+
+            await app.bot.send_message(
+                chat_id=CHAT_ID,
+                text=f"""
+🟢 BUY SIGNAL
+
+Token: {token_name}
+
+Entry: {entry_price}
+
+Liquidity: ${liquidity}
+
+TP: +{TAKE_PROFIT}%
+SL: {STOP_LOSS}%
+"""
+            )
+
+            # WAIT
+
+            await asyncio.sleep(10)
+
+            # RANDOM PNL
+
+            pnl_percent = round(random.uniform(-35, 120), 2)
+
+            active_positions[token_name]["current_price"] = round(
+                entry_price * (1 + pnl_percent / 100),
+                8
+            )
+
+            # SELL
+
+            if pnl_percent > 0:
+                wins += 1
+                consecutive_losses = 0
+                result = "WIN"
+                emoji = "✅"
+
+            else:
+                losses += 1
+                consecutive_losses += 1
+                result = "LOSS"
+                emoji = "❌"
+
+            pnl_total += pnl_percent
+
+            trade_history.append({
+                "token": token_name,
+                "pnl": pnl_percent,
+                "result": result
+            })
+
+            await app.bot.send_message(
+                chat_id=CHAT_ID,
+                text=f"""
+{emoji} SELL SIGNAL
+
+Token: {token_name}
+
+PnL: {pnl_percent}%
+
+Result: {result}
+"""
+            )
+
+            # REMOVE POSITION
+
+            if token_name in active_positions:
+                del active_positions[token_name]
+
+            # AUTO PAUSE
+
+            if consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
+
+                paused = True
+
+                await app.bot.send_message(
+                    chat_id=CHAT_ID,
+                    text="""
+⛔ BOT AUTO-PAUSED
+
+Too many consecutive losses.
+"""
                 )
 
-                if score >= AI_SCORE_ENTRY:
+            # WAIT NEXT TRADE
 
-                    print(f"""
-🔥 SIGNAL
-
-{token['symbol']}
-
-AI SCORE:
-{score}
-""")
-
-                    simulate_trade(token)
-
-            # =============================================
-            # STATUS REPORT
-            # =============================================
-
-            print(f"""
-====================
-
-TOTAL:
-{TOTAL_TRADES}
-
-WINS:
-{WINS}
-
-LOSSES:
-{LOSSES}
-
-PNL:
-{TOTAL_PNL:.2f}%
-
-LOSS STREAK:
-{CONSECUTIVE_LOSSES}
-
-ACTIVE:
-{len(ACTIVE_TRADES)}
-
-====================
-""")
-
-            time.sleep(SCAN_INTERVAL)
+            await asyncio.sleep(20)
 
         except Exception as e:
 
-            print("MAIN ERROR:", e)
+            print("ERROR:", e)
 
-            time.sleep(10)
+            await asyncio.sleep(10)
 
-# =========================================================
+# =========================
 # MAIN
-# =========================================================
+# =========================
 
-def main():
+async def main():
 
-    app = (
-        ApplicationBuilder()
-        .token(
-            TELEGRAM_BOT_TOKEN
-        )
-        .build()
-    )
+    app = Application.builder().token(BOT_TOKEN).build()
 
-    app.add_handler(
-        CommandHandler(
-            "status",
-            status_command
-        )
-    )
+    # COMMANDS
 
-    app.add_handler(
-        CommandHandler(
-            "pnl",
-            pnl_command
-        )
-    )
+    app.add_handler(CommandHandler("status", status))
+    app.add_handler(CommandHandler("positions", positions))
+    app.add_handler(CommandHandler("history", history))
+    app.add_handler(CommandHandler("pause", pause))
+    app.add_handler(CommandHandler("resume", resume))
 
-    app.add_handler(
-        CommandHandler(
-            "pause",
-            pause_command
-        )
-    )
+    # START LOOP
 
-    app.add_handler(
-        CommandHandler(
-            "resume",
-            resume_command
-        )
-    )
+    asyncio.create_task(trading_loop(app))
 
-    app.add_handler(
-        CommandHandler(
-            "help",
-            help_command
-        )
-    )
+    print("BOT RUNNING...")
 
-    trading_thread = threading.Thread(
-        target=trading_loop
-    )
+    await app.run_polling()
 
-    trading_thread.start()
-
-    print("TELEGRAM STARTED")
-
-    app.run_polling()
-
-# =========================================================
+# =========================
 # START
-# =========================================================
+# =========================
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
