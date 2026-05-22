@@ -526,7 +526,7 @@ def start_trading(app):
 
     loop.run_until_complete(
         trading_loop(app)
-        )
+    )
 # ====================================
 # START
 # ====================================
