@@ -602,5 +602,7 @@ if __name__ == "__main__":
     # ================================
 
     app.run_polling(
-        drop_pending_updates=True
-    )
+    drop_pending_updates=True,
+    close_loop=False,
+    stop_signals=None
+)
