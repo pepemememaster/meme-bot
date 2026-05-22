@@ -13,7 +13,7 @@ from datetime import datetime
 # CONFIG
 # ====================================
 
-BOT_TOKEN ="8644117212:AAGgNwZxxx52KESs6jL1YRIr4NASwHt0_IA"
+BOT_TOKEN ="8644117212:AAGJULoVWuf0TQbFSZRw_wcZI2ODSpeoTF4"
 CHAT_ID = "5034825126"
 
 TAKE_PROFIT = 60
