@@ -1,11 +1,10 @@
 # =========================================================
-# PUMP.FUN SAFE SIMULATION AI BOT
-# STABLE VERSION
+# PUMP.FUN REAL MARKET PAPER TRADING BOT
+# FULL REAL DATA VERSION
 # =========================================================
 
 import os
 import time
-import random
 import threading
 import requests
 
@@ -24,10 +23,6 @@ TELEGRAM_BOT_TOKEN = os.getenv(
     "TELEGRAM_BOT_TOKEN"
 )
 
-TELEGRAM_CHAT_ID = os.getenv(
-    "TELEGRAM_CHAT_ID"
-)
-
 # =========================================================
 # SETTINGS
 # =========================================================
@@ -43,7 +38,6 @@ MIN_VOLUME = 80000
 AI_SCORE_ENTRY = 82
 
 MAX_ACTIVE_TRADES = 5
-
 MAX_TRADES_PER_DAY = 50
 
 # =========================================================
@@ -70,7 +64,7 @@ BLACKLIST = [
 ]
 
 # =========================================================
-# TELEGRAM COMMANDS
+# COMMANDS
 # =========================================================
 
 async def status_command(
@@ -87,7 +81,7 @@ async def status_command(
         ) * 100
 
     msg = f"""
-📊 PUMP.FUN STATUS
+📊 REAL MARKET STATUS
 
 Trades:
 {TOTAL_TRADES}
@@ -365,7 +359,47 @@ def is_safe(token):
     return True
 
 # =========================================================
-# SIMULATION
+# REAL LIVE PRICE
+# =========================================================
+
+def get_live_price(symbol):
+
+    try:
+
+        url = (
+            f"https://api.dexscreener.com/latest/dex/search?q={symbol}"
+        )
+
+        response = requests.get(
+            url,
+            timeout=10
+        )
+
+        if response.status_code != 200:
+            return None
+
+        data = response.json()
+
+        pairs = data.get("pairs", [])
+
+        if not pairs:
+            return None
+
+        price = float(
+            pairs[0].get(
+                "priceUsd",
+                0
+            )
+        )
+
+        return price
+
+    except:
+
+        return None
+
+# =========================================================
+# REAL MARKET PAPER TRADE
 # =========================================================
 
 def simulate_trade(token):
@@ -393,21 +427,24 @@ def simulate_trade(token):
 
     buy_price = token["price"]
 
-    print(f"BUY {symbol}")
-
     highest = buy_price
-    current = buy_price
 
-    for _ in range(25):
+    print(f"""
+🚀 BUY
+{symbol}
 
-        time.sleep(2)
+ENTRY:
+{buy_price}
+""")
 
-        movement = random.uniform(
-            0.92,
-            1.18
-        )
+    for _ in range(120):
 
-        current *= movement
+        time.sleep(5)
+
+        current = get_live_price(symbol)
+
+        if current is None:
+            continue
 
         if current > highest:
             highest = current
@@ -419,9 +456,23 @@ def simulate_trade(token):
         ) * 100
 
         print(
-            f"{symbol} "
-            f"PnL: {pnl:.2f}%"
+            f"""
+{symbol}
+
+ENTRY:
+{buy_price:.8f}
+
+CURRENT:
+{current:.8f}
+
+PNL:
+{pnl:.2f}%
+"""
         )
+
+        # =========================
+        # STOP LOSS
+        # =========================
 
         if current <= buy_price * STOP_LOSS:
 
@@ -430,11 +481,22 @@ def simulate_trade(token):
 
             TOTAL_PNL += pnl
 
-            print(f"STOP LOSS {symbol}")
+            print(f"""
+🛑 STOP LOSS
+
+{symbol}
+
+FINAL:
+{pnl:.2f}%
+""")
 
             ACTIVE_TRADES.pop(symbol)
 
             return
+
+        # =========================
+        # TAKE PROFIT
+        # =========================
 
         if current >= buy_price * TAKE_PROFIT:
 
@@ -443,15 +505,26 @@ def simulate_trade(token):
 
             TOTAL_PNL += pnl
 
-            print(f"TP HIT {symbol}")
+            print(f"""
+✅ TAKE PROFIT
+
+{symbol}
+
+FINAL:
+{pnl:.2f}%
+""")
 
             ACTIVE_TRADES.pop(symbol)
 
             return
 
+        # =========================
+        # MOON BAG
+        # =========================
+
         if highest >= buy_price * 2:
 
-            trailing = highest * 0.78
+            trailing = highest * 0.75
 
             if current <= trailing:
 
@@ -460,11 +533,50 @@ def simulate_trade(token):
 
                 TOTAL_PNL += pnl
 
-                print(f"MOON EXIT {symbol}")
+                print(f"""
+🌕 MOON EXIT
+
+{symbol}
+
+FINAL:
+{pnl:.2f}%
+""")
 
                 ACTIVE_TRADES.pop(symbol)
 
                 return
+
+    # =========================
+    # TIME EXIT
+    # =========================
+
+    final_price = get_live_price(symbol)
+
+    if final_price:
+
+        pnl = (
+            (
+                final_price / buy_price
+            ) - 1
+        ) * 100
+
+        TOTAL_TRADES += 1
+
+        if pnl > 0:
+            WINS += 1
+        else:
+            LOSSES += 1
+
+        TOTAL_PNL += pnl
+
+        print(f"""
+⏰ TIME EXIT
+
+{symbol}
+
+FINAL:
+{pnl:.2f}%
+""")
 
     ACTIVE_TRADES.pop(symbol)
 
@@ -476,7 +588,7 @@ def trading_loop():
 
     global BOT_PAUSED
 
-    print("PUMP.FUN AI STARTED")
+    print("REAL MARKET BOT STARTED")
 
     while True:
 
@@ -505,8 +617,9 @@ def trading_loop():
 
                     print(
                         f"""
-SIGNAL:
+🔥 SIGNAL
 {token['symbol']}
+
 AI:
 {score}
 """
@@ -516,6 +629,8 @@ AI:
 
             print(
                 f"""
+====================
+
 TOTAL:
 {TOTAL_TRADES}
 
@@ -527,6 +642,8 @@ LOSSES:
 
 PNL:
 {TOTAL_PNL:.2f}%
+
+====================
 """
             )
 
