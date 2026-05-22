@@ -12,6 +12,10 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 TAKE_PROFIT = 1.20
 STOP_LOSS = 0.88
 
+TOTAL_PNL = 0
+TOTAL_TRADES = 0
+WINS = 0
+LOSSES = 0
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 
 # ===== 模擬 Token 資料 =====
@@ -86,20 +90,43 @@ def simulate_trade(token):
         print(f"Current Price: {current_price:.6f} | PnL: {pnl:.2f}%")
 
         if current_price >= buy_price * TAKE_PROFIT:
+
+            global TOTAL_PNL, TOTAL_TRADES, WINS
+
+            TOTAL_PNL += pnl
+            TOTAL_TRADES += 1
+            WINS += 1
+
             send_telegram(
                 f"✅ Take Profit Hit\n"
                 f"{token['symbol']}\n"
                 f"PnL: +{pnl:.2f}%"
             )
+
+            print(f"Total PnL: {TOTAL_PNL:.2f}%")
+            print(f"Total Trades: {TOTAL_TRADES}")
+            print(f"Win Rate: {(WINS / TOTAL_TRADES) * 100:.2f}%")
+
             return
 
         if current_price <= buy_price * STOP_LOSS:
+
+            global TOTAL_PNL, TOTAL_TRADES, LOSSES
+
+            TOTAL_PNL += pnl
+            TOTAL_TRADES += 1
+            LOSSES += 1
+
             send_telegram(
                 f"🛑 Stop Loss Hit\n"
                 f"{token['symbol']}\n"
                 f"PnL: {pnl:.2f}%"
             )
-            return
+
+            print(f"Total PnL: {TOTAL_PNL:.2f}%")
+            print(f"Total Trades: {TOTAL_TRADES}")
+            print(f"Win Rate: {(WINS / TOTAL_TRADES) * 100:.2f}%")
+
 
 def main():
     send_telegram("🤖 Meme Bot Started")
