@@ -1,6 +1,6 @@
 
 # =========================================================
-# HIGH FREQUENCY AI QUANT BOT
+# STABLE HIGH FREQUENCY AI BOT
 # TELEGRAM CONTROL PANEL VERSION
 # =========================================================
 
@@ -104,11 +104,6 @@ async def status_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-
-    global TOTAL_TRADES
-    global WINS
-    global LOSSES
-    global TOTAL_PNL
 
     winrate = 0
 
@@ -290,8 +285,7 @@ def get_trending_tokens():
     try:
 
         url = (
-            "https://api.dexscreener.com/"
-            "latest/dex/search?q=solana"
+            "https://api.dexscreener.com/latest/dex/search?q=solana"
         )
 
         response = requests.get(
@@ -551,8 +545,6 @@ ${buy_price:.8f}
             f"PnL: {pnl:.2f}%"
         )
 
-        # STOP LOSS
-
         if current <= buy_price * STOP_LOSS:
 
             TOTAL_TRADES += 1
@@ -574,8 +566,6 @@ PnL:
 
             return
 
-        # TP1
-
         if (
             not tp1_hit
             and current >= buy_price * TAKE_PROFIT_1
@@ -593,8 +583,6 @@ f"""
 """
             )
 
-        # TP2
-
         if (
             not tp2_hit
             and current >= buy_price * TAKE_PROFIT_2
@@ -611,8 +599,6 @@ f"""
 Moonbag Running
 """
             )
-
-        # TRAILING
 
         trailing_price = (
             highest * (
@@ -682,7 +668,7 @@ PnL:
     )
 
 # =========================================================
-# BOT LOOP
+# TRADING LOOP
 # =========================================================
 
 def trading_loop():
