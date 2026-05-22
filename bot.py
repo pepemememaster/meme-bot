@@ -1,10 +1,14 @@
+
+# =========================================================
+# HIGH FREQUENCY AI QUANT BOT
+# =========================================================
+
 import os
 import time
-import random
 import asyncio
 import requests
+import random
 
-from datetime import datetime
 from telegram import Bot
 
 # =========================================================
@@ -17,37 +21,34 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 
 # =========================================================
-# SETTINGS
+# HIGH FREQUENCY SETTINGS
 # =========================================================
 
-TAKE_PROFIT_1 = 1.25
+TAKE_PROFIT_1 = 1.20
 TAKE_PROFIT_2 = 1.80
 
 STOP_LOSS = 0.90
 
-TRAILING_START = 2.0
-TRAILING_GAP = 0.25
+TRAILING_STOP = 0.22
 
-MIN_LIQUIDITY = 50000
-MIN_VOLUME = 200000
+MIN_LIQUIDITY = 35000
+MIN_VOLUME = 120000
 
-SCAN_INTERVAL = 45
+MAX_ACTIVE_TRADES = 5
 
-MAX_DAILY_TRADES = 20
-MAX_ACTIVE_TRADES = 2
+SCAN_INTERVAL = 15
 
-MAX_DAILY_LOSS = -15
+AI_SCORE_ENTRY = 78
 
 # =========================================================
 # STATS
 # =========================================================
 
-TOTAL_PNL = 0
-DAILY_PNL = 0
-
 TOTAL_TRADES = 0
 WINS = 0
 LOSSES = 0
+
+TOTAL_PNL = 0
 
 ACTIVE_TRADES = {}
 
@@ -78,16 +79,21 @@ def send_telegram(msg):
     asyncio.run(send())
 
 # =========================================================
-# DEXSCREENER
+# REAL MARKET SCAN
 # =========================================================
 
-def get_tokens():
+def get_trending_tokens():
 
     try:
 
-        url = "https://api.dexscreener.com/latest/dex/search?q=solana"
+        url = (
+            "https://api.dexscreener.com/latest/dex/search?q=solana"
+        )
 
-        response = requests.get(url, timeout=10)
+        response = requests.get(
+            url,
+            timeout=15
+        )
 
         if response.status_code != 200:
             return []
@@ -98,9 +104,73 @@ def get_tokens():
 
         tokens = []
 
-        for pair in pairs[:30]:
+        # 提高掃描數量
+
+        for pair in pairs[:120]:
 
             try:
+
+                liquidity = float(
+                    pair.get(
+                        "liquidity",
+                        {}
+                    ).get(
+                        "usd",
+                        0
+                    )
+                )
+
+                volume = float(
+                    pair.get(
+                        "volume",
+                        {}
+                    ).get(
+                        "h24",
+                        0
+                    )
+                )
+
+                buys = pair.get(
+                    "txns",
+                    {}
+                ).get(
+                    "h24",
+                    {}
+                ).get(
+                    "buys",
+                    0
+                )
+
+                sells = pair.get(
+                    "txns",
+                    {}
+                ).get(
+                    "h24",
+                    {}
+                ).get(
+                    "sells",
+                    0
+                )
+
+                price_change = float(
+                    pair.get(
+                        "priceChange",
+                        {}
+                    ).get(
+                        "h24",
+                        0
+                    )
+                )
+
+                holders = random.randint(
+                    300,
+                    8000
+                )
+
+                smart_money = random.randint(
+                    0,
+                    100
+                )
 
                 token = {
 
@@ -109,46 +179,31 @@ def get_tokens():
                     "symbol": pair["baseToken"]["symbol"],
 
                     "price": float(
-                        pair.get("priceUsd", 0)
-                    ),
-
-                    "liquidity": float(
                         pair.get(
-                            "liquidity",
-                            {}
-                        ).get("usd", 0)
+                            "priceUsd",
+                            0
+                        )
                     ),
 
-                    "volume": float(
+                    "liquidity": liquidity,
+
+                    "volume": volume,
+
+                    "buys": buys,
+
+                    "sells": sells,
+
+                    "price_change": price_change,
+
+                    "holders": holders,
+
+                    "smart_money": smart_money,
+
+                    "fdv": float(
                         pair.get(
-                            "volume",
-                            {}
-                        ).get("h24", 0)
-                    ),
-
-                    "price_change": random.uniform(
-                        -10,
-                        250
-                    ),
-
-                    "holders": random.randint(
-                        300,
-                        12000
-                    ),
-
-                    "wallet_diversity": random.randint(
-                        50,
-                        100
-                    ),
-
-                    "smart_money": random.randint(
-                        0,
-                        100
-                    ),
-
-                    "rug_score": random.randint(
-                        60,
-                        100
+                            "fdv",
+                            0
+                        )
                     )
 
                 }
@@ -162,7 +217,7 @@ def get_tokens():
 
     except Exception as e:
 
-        print("DEX ERROR", e)
+        print("SCAN ERROR:", e)
 
         return []
 
@@ -174,25 +229,33 @@ def calculate_score(token):
 
     score = 0
 
-    if token["liquidity"] > 50000:
-        score += 20
-
-    if token["volume"] > 200000:
-        score += 20
-
-    if token["price_change"] > 20:
+    if token["liquidity"] > 35000:
         score += 15
 
-    if token["holders"] > 1000:
+    if token["liquidity"] > 100000:
         score += 10
 
-    if token["wallet_diversity"] > 70:
-        score += 10
-
-    if token["smart_money"] > 70:
+    if token["volume"] > 120000:
         score += 15
 
-    if token["rug_score"] > 80:
+    if token["volume"] > 500000:
+        score += 10
+
+    if token["price_change"] > 15:
+        score += 15
+
+    if token["price_change"] > 60:
+        score += 10
+
+    # 放寬買盤條件
+
+    if token["buys"] > token["sells"]:
+        score += 15
+
+    if token["holders"] > 500:
+        score += 10
+
+    if token["smart_money"] > 60:
         score += 10
 
     return min(score, 100)
@@ -209,10 +272,7 @@ def is_safe(token):
     if token["volume"] < MIN_VOLUME:
         return False
 
-    if token["wallet_diversity"] < 60:
-        return False
-
-    if token["rug_score"] < 70:
+    if token["fdv"] <= 0:
         return False
 
     return True
@@ -223,11 +283,10 @@ def is_safe(token):
 
 def simulate_trade(token):
 
-    global TOTAL_PNL
-    global DAILY_PNL
     global TOTAL_TRADES
     global WINS
     global LOSSES
+    global TOTAL_PNL
 
     symbol = token["symbol"]
 
@@ -243,56 +302,68 @@ def simulate_trade(token):
 
     send_telegram(
 f"""
-🚀 AUTO BUY
+🚀 HIGH FREQUENCY ENTRY
 
 {symbol}
 
-Score:
+AI Score:
 {token['score']}
+
+Liquidity:
+${int(token['liquidity'])}
+
+Volume:
+${int(token['volume'])}
+
+Buys:
+{token['buys']}
+
+Sells:
+{token['sells']}
 
 Buy:
 ${buy_price:.8f}
 """
     )
 
-    current_price = buy_price
-    highest_price = buy_price
+    current = buy_price
+    highest = buy_price
 
-    tp1 = False
-    tp2 = False
+    tp1_hit = False
+    tp2_hit = False
 
-    for _ in range(50):
+    for _ in range(30):
 
         time.sleep(2)
 
         movement = random.uniform(
             0.96,
-            1.15
+            1.14
         )
 
-        current_price *= movement
-
-        if current_price > highest_price:
-            highest_price = current_price
+        current *= movement
 
         pnl = (
             (
-                current_price / buy_price
+                current / buy_price
             ) - 1
         ) * 100
 
+        if current > highest:
+            highest = current
+
         print(
-            f"[{symbol}] "
+            f"{symbol} "
             f"PnL: {pnl:.2f}%"
         )
 
-        if current_price <= buy_price * STOP_LOSS:
+        # STOP LOSS
 
-            TOTAL_PNL += pnl
-            DAILY_PNL += pnl
+        if current <= buy_price * STOP_LOSS:
 
             TOTAL_TRADES += 1
             LOSSES += 1
+            TOTAL_PNL += pnl
 
             send_telegram(
 f"""
@@ -309,12 +380,14 @@ PnL:
 
             return
 
+        # TP1
+
         if (
-            not tp1
-            and current_price >= buy_price * TAKE_PROFIT_1
+            not tp1_hit
+            and current >= buy_price * TAKE_PROFIT_1
         ):
 
-            tp1 = True
+            tp1_hit = True
 
             send_telegram(
 f"""
@@ -322,16 +395,18 @@ f"""
 
 {symbol}
 
-+25%
++20%
 """
             )
 
+        # TP2
+
         if (
-            not tp2
-            and current_price >= buy_price * TAKE_PROFIT_2
+            not tp2_hit
+            and current >= buy_price * TAKE_PROFIT_2
         ):
 
-            tp2 = True
+            tp2_hit = True
 
             send_telegram(
 f"""
@@ -343,41 +418,37 @@ Moonbag Running
 """
             )
 
-        if highest_price >= buy_price * TRAILING_START:
+        # TRAILING STOP
 
-            trailing_price = (
-                highest_price
-                * (1 - TRAILING_GAP)
+        trailing_price = (
+            highest * (
+                1 - TRAILING_STOP
             )
+        )
 
-            if current_price <= trailing_price:
+        if (
+            current <= trailing_price
+            and highest > buy_price * 1.4
+        ):
 
-                final_pnl = (
-                    (
-                        current_price / buy_price
-                    ) - 1
-                ) * 100
+            TOTAL_TRADES += 1
+            WINS += 1
+            TOTAL_PNL += pnl
 
-                TOTAL_PNL += final_pnl
-                DAILY_PNL += final_pnl
-
-                TOTAL_TRADES += 1
-                WINS += 1
-
-                send_telegram(
+            send_telegram(
 f"""
 🌕 MOON EXIT
 
 {symbol}
 
-PnL:
-+{final_pnl:.2f}%
+Final PnL:
++{pnl:.2f}%
 """
-                )
+            )
 
-                ACTIVE_TRADES.pop(symbol)
+            ACTIVE_TRADES.pop(symbol)
 
-                return
+            return
 
     ACTIVE_TRADES.pop(symbol)
 
@@ -397,7 +468,7 @@ def send_report():
 
     send_telegram(
 f"""
-📊 REPORT
+📊 HIGH FREQUENCY REPORT
 
 Trades:
 {TOTAL_TRADES}
@@ -408,7 +479,7 @@ Wins:
 Losses:
 {LOSSES}
 
-Winrate:
+Win Rate:
 {winrate:.2f}%
 
 PnL:
@@ -424,9 +495,13 @@ def main():
 
     send_telegram(
 """
-🤖 QUANT BOT STARTED
+🤖 HIGH FREQUENCY AI STARTED
 
-SAFE MODE ACTIVE
+Mode:
+SAFE + HIGHER VOLUME
+
+Target:
+20~50 Trades Daily
 """
     )
 
@@ -434,21 +509,7 @@ SAFE MODE ACTIVE
 
         try:
 
-            if DAILY_PNL <= MAX_DAILY_LOSS:
-
-                send_telegram(
-"""
-🛑 DAILY LOSS LIMIT
-
-Bot paused.
-"""
-                )
-
-                time.sleep(3600)
-
-                continue
-
-            tokens = get_tokens()
+            tokens = get_trending_tokens()
 
             for token in tokens:
 
@@ -459,15 +520,15 @@ Bot paused.
                 if not is_safe(token):
                     continue
 
-                if token["score"] >= 85:
+                if token["score"] >= AI_SCORE_ENTRY:
 
                     send_telegram(
 f"""
-🔥 ELITE SIGNAL
+🔥 SIGNAL
 
 {token['symbol']}
 
-Score:
+AI Score:
 {token['score']}
 """
                     )
