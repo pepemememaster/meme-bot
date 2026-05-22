@@ -27,21 +27,7 @@ WATCHLIST = [
 ]
 
 def send_telegram(msg):
-    try:
-        def send_telegram(msg):
-    import asyncio
-
-    try:
-        asyncio.run(
-            bot.send_message(
-                chat_id=TELEGRAM_CHAT_ID,
-                text=msg
-            )
-        )
-    except Exception as e:
-        print(e)
-    except Exception as e:
-        print("Telegram error:", e)
+    print(msg)
 
 def is_safe(token):
     if token["liquidity"] < 15000:
@@ -52,9 +38,7 @@ def is_safe(token):
 
     if token["mint_enabled"]:
         return False
-
     return True
-
 def simulate_trade(token):
     buy_price = token["price"]
 
