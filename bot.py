@@ -13,8 +13,8 @@ from datetime import datetime
 # CONFIG
 # ====================================
 
-BOT_TOKEN = "YOUR_BOT_TOKEN"
-CHAT_ID = "YOUR_CHAT_ID"
+BOT_TOKEN ="AAGgNwZxxx52KESs6jL1YRIr4NASwHt0"
+CHAT_ID = "5034825126"
 
 TAKE_PROFIT = 60
 STOP_LOSS = -20
