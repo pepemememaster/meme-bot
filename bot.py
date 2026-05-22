@@ -13,21 +13,26 @@ from datetime import datetime
 # CONFIG
 # ====================================
 
-BOT_TOKEN ="8644117212:AAGJULoVWuf0TQbFSZRw_wcZI2ODSpeoTF4"
+BOT_TOKEN = "8644117212:AAGJULoVWuf0TQbFSZRw_wcZI2ODSpeoTF4"
 CHAT_ID = "5034825126"
 
 TAKE_PROFIT = 60
 STOP_LOSS = -20
 
-MIN_LIQUIDITY = 10000
-MIN_VOLUME_24H = 5000
+MIN_LIQUIDITY = 5000
+MAX_LIQUIDITY = 150000
 
-MAX_CONSECUTIVE_LOSSES = 5
+MIN_VOLUME_24H = 10000
+
+MIN_BUYS = 20
+MAX_SELL_RATIO = 0.8
 
 CHECK_INTERVAL = 30
 
+MAX_CONSECUTIVE_LOSSES = 5
+
 # ====================================
-# GLOBAL STATS
+# GLOBALS
 # ====================================
 
 paper_trades = 0
@@ -39,6 +44,7 @@ paused = False
 
 active_positions = {}
 trade_history = []
+recent_tokens = set()
 
 # ====================================
 # STATUS
@@ -54,7 +60,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         winrate = 0
 
     text = f"""
-📊 REAL MARKET PAPER TRADING
+📊 MEME SNIPER PAPER BOT
 
 Trades: {paper_trades}
 
@@ -81,7 +87,6 @@ Paused: {paused}
 async def positions(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not active_positions:
-
         await update.message.reply_text("No active positions.")
         return
 
@@ -114,7 +119,6 @@ Liquidity: ${data['liquidity']}
 async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not trade_history:
-
         await update.message.reply_text("No trade history.")
         return
 
@@ -174,17 +178,38 @@ def fetch_tokens():
 
             try:
 
+                token_name = pair["baseToken"]["symbol"]
+
+                if token_name in [
+                    "SOL",
+                    "USDC",
+                    "USDT",
+                    "WETH",
+                    "WBTC",
+                ]:
+                    continue
+
                 liquidity = pair.get("liquidity", {}).get("usd", 0)
 
                 volume = pair.get("volume", {}).get("h24", 0)
 
+                buys = pair.get("txns", {}).get("h24", {}).get("buys", 0)
+
+                sells = pair.get("txns", {}).get("h24", {}).get("sells", 0)
+
                 price = float(pair.get("priceUsd", 0))
 
-                token_name = pair["baseToken"]["symbol"]
+                if sells == 0:
+                    sell_ratio = 0
+                else:
+                    sell_ratio = sells / max(buys, 1)
 
                 if (
                     liquidity >= MIN_LIQUIDITY
+                    and liquidity <= MAX_LIQUIDITY
                     and volume >= MIN_VOLUME_24H
+                    and buys >= MIN_BUYS
+                    and sell_ratio <= MAX_SELL_RATIO
                     and price > 0
                 ):
 
@@ -192,7 +217,9 @@ def fetch_tokens():
                         "token": token_name,
                         "price": price,
                         "liquidity": liquidity,
-                        "volume": volume
+                        "volume": volume,
+                        "buys": buys,
+                        "sells": sells
                     })
 
             except:
@@ -232,16 +259,17 @@ async def trading_loop(app):
 
             if not tokens:
 
-                print("NO TOKENS FOUND")
-
                 await asyncio.sleep(20)
                 continue
 
-            for token_data in tokens[:3]:
+            for token_data in tokens[:5]:
 
                 token_name = token_data["token"]
 
                 if token_name in active_positions:
+                    continue
+
+                if token_name in recent_tokens:
                     continue
 
                 entry_price = token_data["price"]
@@ -250,7 +278,8 @@ async def trading_loop(app):
 
                 volume = round(token_data["volume"], 2)
 
-                # BUY
+                buys = token_data["buys"]
+                sells = token_data["sells"]
 
                 paper_trades += 1
 
@@ -260,6 +289,8 @@ async def trading_loop(app):
                     "liquidity": liquidity,
                     "buy_time": datetime.now()
                 }
+
+                recent_tokens.add(token_name)
 
                 await app.bot.send_message(
                     chat_id=CHAT_ID,
@@ -274,12 +305,14 @@ Liquidity: ${liquidity}
 
 24H Volume: ${volume}
 
+Buys/Sells: {buys}/{sells}
+
 TP: +{TAKE_PROFIT}%
 SL: {STOP_LOSS}%
 """
                 )
 
-                await asyncio.sleep(15)
+                await asyncio.sleep(20)
 
                 updated_tokens = fetch_tokens()
 
