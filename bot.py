@@ -580,13 +580,39 @@ if __name__ == "__main__":
 
     print("🚀 BOT RUNNING...")
 
-    asyncio.create_task(
-        trading_loop(app)
+import threading
+
+def start_trading(app):
+
+    def run_loop():
+        asyncio.run(trading_loop(app))
+
+    thread = threading.Thread(
+        target=run_loop,
+        daemon=True
     )
 
+    thread.start()
+
+
+if __name__ == "__main__":
+
+    app = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .build()
+    )
+
+    app.add_handler(CommandHandler("status", status))
+    app.add_handler(CommandHandler("positions", positions))
+    app.add_handler(CommandHandler("history", history))
+    app.add_handler(CommandHandler("pause", pause))
+    app.add_handler(CommandHandler("resume", resume))
+
+    print("🚀 BOT RUNNING...")
+
+    start_trading(app)
+
     app.run_polling(
-        drop_pending_updates=True,
-        allowed_updates=[],
-        close_loop=False,
-        stop_signals=None
+        drop_pending_updates=True
     )
