@@ -1,0 +1,1 @@
+# Meme Sniper Bot\n\nUpload to Railway and set env variables.
