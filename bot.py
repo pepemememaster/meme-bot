@@ -589,7 +589,7 @@ if __name__ == "__main__":
 
         args=(app,),
 
-        daemon=True
+        daemon=False
 
     )
 
