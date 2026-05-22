@@ -1,7 +1,7 @@
 # =========================================================
 # ADVANCED REAL MARKET PAPER TRADING BOT
-# REAL EXECUTION SIMULATION VERSION
-# 100 TRADES DAILY MODE
+# AUTO RECOVERY VERSION
+# REAL EXECUTION SIMULATION
 # =========================================================
 
 import os
@@ -60,6 +60,8 @@ MAX_CONSECUTIVE_LOSSES = 4
 
 DAILY_MAX_LOSS = -35
 
+AUTO_RECOVERY_SECONDS = 3600
+
 # =========================================================
 # GLOBALS
 # =========================================================
@@ -86,7 +88,7 @@ BLACKLIST = [
 ]
 
 # =========================================================
-# COMMANDS
+# TELEGRAM COMMANDS
 # =========================================================
 
 async def status_command(
@@ -179,8 +181,11 @@ async def resume_command(
 ):
 
     global BOT_PAUSED
+    global CONSECUTIVE_LOSSES
 
     BOT_PAUSED = False
+
+    CONSECUTIVE_LOSSES = 0
 
     await update.message.reply_text(
 """
@@ -441,7 +446,9 @@ def simulate_trade(token):
 
         BOT_PAUSED = True
 
-        print("DAILY LOSS LIMIT HIT")
+        print("""
+🛑 DAILY LOSS LIMIT HIT
+""")
 
         return
 
@@ -449,7 +456,9 @@ def simulate_trade(token):
 
         BOT_PAUSED = True
 
-        print("MAX LOSING STREAK HIT")
+        print("""
+🛑 MAX LOSING STREAK HIT
+""")
 
         return
 
@@ -471,7 +480,7 @@ def simulate_trade(token):
     market_price = token["price"]
 
     # =====================================================
-    # REAL BUY SLIPPAGE
+    # BUY SLIPPAGE
     # =====================================================
 
     buy_price = (
@@ -506,7 +515,7 @@ FILLED:
             continue
 
         # =================================================
-        # REAL SELL SLIPPAGE
+        # SELL SLIPPAGE
         # =================================================
 
         current = (
@@ -518,7 +527,7 @@ FILLED:
         )
 
         # =================================================
-        # RUG FAIL SIMULATION
+        # RUG FAIL
         # =================================================
 
         if current <= buy_price * 0.5:
@@ -678,12 +687,13 @@ FINAL:
     ACTIVE_TRADES.pop(symbol)
 
 # =========================================================
-# LOOP
+# TRADING LOOP
 # =========================================================
 
 def trading_loop():
 
     global BOT_PAUSED
+    global CONSECUTIVE_LOSSES
 
     print("ADVANCED PAPER BOT STARTED")
 
@@ -691,13 +701,34 @@ def trading_loop():
 
         try:
 
+            # =============================================
+            # AUTO RECOVERY MODE
+            # =============================================
+
             if BOT_PAUSED:
 
-                print("BOT PAUSED")
+                print(f"""
+⏸ BOT PAUSED
 
-                time.sleep(30)
+AUTO RECOVERY:
+{AUTO_RECOVERY_SECONDS // 60} MINUTES
+""")
+
+                time.sleep(AUTO_RECOVERY_SECONDS)
+
+                BOT_PAUSED = False
+
+                CONSECUTIVE_LOSSES = 0
+
+                print("""
+▶️ AUTO RESUME
+""")
 
                 continue
+
+            # =============================================
+            # SCAN TOKENS
+            # =============================================
 
             tokens = get_tokens()
 
@@ -723,6 +754,10 @@ AI SCORE:
 
                     simulate_trade(token)
 
+            # =============================================
+            # STATUS REPORT
+            # =============================================
+
             print(f"""
 ====================
 
@@ -740,6 +775,9 @@ PNL:
 
 LOSS STREAK:
 {CONSECUTIVE_LOSSES}
+
+ACTIVE:
+{len(ACTIVE_TRADES)}
 
 ====================
 """)
