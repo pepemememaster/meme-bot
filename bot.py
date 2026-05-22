@@ -1,6 +1,7 @@
 
 # =========================================================
 # HIGH FREQUENCY AI QUANT BOT
+# TELEGRAM CONTROL PANEL VERSION
 # =========================================================
 
 import os
@@ -8,20 +9,31 @@ import time
 import asyncio
 import requests
 import random
+import threading
 
-from telegram import Bot
+from telegram import Bot, Update
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    ContextTypes
+)
 
 # =========================================================
 # TELEGRAM
 # =========================================================
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+TELEGRAM_BOT_TOKEN = os.getenv(
+    "TELEGRAM_BOT_TOKEN"
+)
+
+TELEGRAM_CHAT_ID = os.getenv(
+    "TELEGRAM_CHAT_ID"
+)
 
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 
 # =========================================================
-# HIGH FREQUENCY SETTINGS
+# SETTINGS
 # =========================================================
 
 TAKE_PROFIT_1 = 1.20
@@ -41,10 +53,11 @@ SCAN_INTERVAL = 15
 AI_SCORE_ENTRY = 78
 
 # =========================================================
-# STATS
+# GLOBAL STATS
 # =========================================================
 
 TOTAL_TRADES = 0
+
 WINS = 0
 LOSSES = 0
 
@@ -52,8 +65,10 @@ TOTAL_PNL = 0
 
 ACTIVE_TRADES = {}
 
+BOT_PAUSED = False
+
 # =========================================================
-# TELEGRAM
+# TELEGRAM SEND
 # =========================================================
 
 def send_telegram(msg):
@@ -74,9 +89,197 @@ def send_telegram(msg):
 
         except Exception as e:
 
-            print("Telegram Error:", e)
+            print(
+                "Telegram Error:",
+                e
+            )
 
     asyncio.run(send())
+
+# =========================================================
+# TELEGRAM COMMANDS
+# =========================================================
+
+async def status_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    global TOTAL_TRADES
+    global WINS
+    global LOSSES
+    global TOTAL_PNL
+
+    winrate = 0
+
+    if TOTAL_TRADES > 0:
+
+        winrate = (
+            WINS / TOTAL_TRADES
+        ) * 100
+
+    msg = f"""
+📊 BOT STATUS
+
+Trades:
+{TOTAL_TRADES}
+
+Wins:
+{WINS}
+
+Losses:
+{LOSSES}
+
+Win Rate:
+{winrate:.2f}%
+
+PnL:
+{TOTAL_PNL:.2f}%
+
+Active Trades:
+{len(ACTIVE_TRADES)}
+
+Bot Paused:
+{BOT_PAUSED}
+"""
+
+    await update.message.reply_text(msg)
+
+# =========================================================
+
+async def pnl_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    await update.message.reply_text(
+f"""
+💰 CURRENT PNL
+
+PnL:
+{TOTAL_PNL:.2f}%
+
+Trades:
+{TOTAL_TRADES}
+"""
+    )
+
+# =========================================================
+
+async def positions_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    if len(ACTIVE_TRADES) == 0:
+
+        await update.message.reply_text(
+"""
+📭 NO ACTIVE TRADES
+"""
+        )
+
+        return
+
+    msg = "🚀 ACTIVE TRADES\n\n"
+
+    for symbol in ACTIVE_TRADES:
+
+        msg += f"{symbol}\n"
+
+    await update.message.reply_text(msg)
+
+# =========================================================
+
+async def pause_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    global BOT_PAUSED
+
+    BOT_PAUSED = True
+
+    await update.message.reply_text(
+"""
+⏸ BOT PAUSED
+"""
+    )
+
+# =========================================================
+
+async def resume_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    global BOT_PAUSED
+
+    BOT_PAUSED = False
+
+    await update.message.reply_text(
+"""
+▶️ BOT RESUMED
+"""
+    )
+
+# =========================================================
+
+async def settings_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    msg = f"""
+⚙️ SETTINGS
+
+AI SCORE:
+{AI_SCORE_ENTRY}
+
+MIN LIQUIDITY:
+{MIN_LIQUIDITY}
+
+MIN VOLUME:
+{MIN_VOLUME}
+
+MAX ACTIVE:
+{MAX_ACTIVE_TRADES}
+
+SCAN:
+{SCAN_INTERVAL}s
+
+TP1:
+{TAKE_PROFIT_1}
+
+TP2:
+{TAKE_PROFIT_2}
+
+STOP LOSS:
+{STOP_LOSS}
+"""
+
+    await update.message.reply_text(msg)
+
+# =========================================================
+
+async def help_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    msg = """
+🤖 COMMANDS
+
+/status
+/pnl
+/positions
+/pause
+/resume
+/settings
+/help
+"""
+
+    await update.message.reply_text(msg)
 
 # =========================================================
 # REAL MARKET SCAN
@@ -87,7 +290,8 @@ def get_trending_tokens():
     try:
 
         url = (
-            "https://api.dexscreener.com/latest/dex/search?q=solana"
+            "https://api.dexscreener.com/"
+            "latest/dex/search?q=solana"
         )
 
         response = requests.get(
@@ -103,8 +307,6 @@ def get_trending_tokens():
         pairs = data.get("pairs", [])
 
         tokens = []
-
-        # 提高掃描數量
 
         for pair in pairs[:120]:
 
@@ -247,8 +449,6 @@ def calculate_score(token):
     if token["price_change"] > 60:
         score += 10
 
-    # 放寬買盤條件
-
     if token["buys"] > token["sells"]:
         score += 15
 
@@ -278,7 +478,7 @@ def is_safe(token):
     return True
 
 # =========================================================
-# TRADE
+# SIMULATE TRADE
 # =========================================================
 
 def simulate_trade(token):
@@ -314,12 +514,6 @@ ${int(token['liquidity'])}
 
 Volume:
 ${int(token['volume'])}
-
-Buys:
-{token['buys']}
-
-Sells:
-{token['sells']}
 
 Buy:
 ${buy_price:.8f}
@@ -418,7 +612,7 @@ Moonbag Running
 """
             )
 
-        # TRAILING STOP
+        # TRAILING
 
         trailing_price = (
             highest * (
@@ -488,10 +682,12 @@ PnL:
     )
 
 # =========================================================
-# MAIN
+# BOT LOOP
 # =========================================================
 
-def main():
+def trading_loop():
+
+    global BOT_PAUSED
 
     send_telegram(
 """
@@ -508,6 +704,14 @@ Target:
     while True:
 
         try:
+
+            if BOT_PAUSED:
+
+                print("BOT PAUSED")
+
+                time.sleep(10)
+
+                continue
 
             tokens = get_trending_tokens()
 
@@ -544,6 +748,77 @@ AI Score:
             print("MAIN ERROR:", e)
 
             time.sleep(10)
+
+# =========================================================
+# MAIN
+# =========================================================
+
+def main():
+
+    app = (
+        ApplicationBuilder()
+        .token(TELEGRAM_BOT_TOKEN)
+        .build()
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "status",
+            status_command
+        )
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "pnl",
+            pnl_command
+        )
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "positions",
+            positions_command
+        )
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "pause",
+            pause_command
+        )
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "resume",
+            resume_command
+        )
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "settings",
+            settings_command
+        )
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "help",
+            help_command
+        )
+    )
+
+    trading_thread = threading.Thread(
+        target=trading_loop
+    )
+
+    trading_thread.start()
+
+    print("Telegram Bot Started")
+
+    app.run_polling()
 
 # =========================================================
 # START
