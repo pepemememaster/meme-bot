@@ -1,5 +1,10 @@
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+)
+
 import asyncio
 import requests
 from datetime import datetime
@@ -36,7 +41,7 @@ active_positions = {}
 trade_history = []
 
 # ====================================
-# STATUS COMMAND
+# STATUS
 # ====================================
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -70,12 +75,13 @@ Paused: {paused}
     await update.message.reply_text(text)
 
 # ====================================
-# POSITIONS COMMAND
+# POSITIONS
 # ====================================
 
 async def positions(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not active_positions:
+
         await update.message.reply_text("No active positions.")
         return
 
@@ -102,12 +108,13 @@ Liquidity: ${data['liquidity']}
     await update.message.reply_text(text)
 
 # ====================================
-# HISTORY COMMAND
+# HISTORY
 # ====================================
 
 async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not trade_history:
+
         await update.message.reply_text("No trade history.")
         return
 
@@ -217,6 +224,7 @@ async def trading_loop(app):
         try:
 
             if paused:
+
                 await asyncio.sleep(10)
                 continue
 
@@ -271,11 +279,7 @@ SL: {STOP_LOSS}%
 """
                 )
 
-                # WAIT
-
                 await asyncio.sleep(15)
-
-                # REFRESH PRICE
 
                 updated_tokens = fetch_tokens()
 
@@ -286,7 +290,6 @@ SL: {STOP_LOSS}%
                     if updated["token"] == token_name:
 
                         current_price = updated["price"]
-
                         break
 
                 active_positions[token_name]["current_price"] = current_price
@@ -297,8 +300,6 @@ SL: {STOP_LOSS}%
                 ) * 100
 
                 pnl_percent = round(pnl_percent, 2)
-
-                # TP / SL
 
                 should_sell = False
 
@@ -356,8 +357,6 @@ Held: {held_time}
 
                     del active_positions[token_name]
 
-                    # AUTO PAUSE
-
                     if consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
 
                         paused = True
@@ -380,20 +379,31 @@ Too many consecutive losses.
             await asyncio.sleep(10)
 
 # ====================================
+# POST INIT
+# ====================================
+
+async def post_init(application: Application):
+
+    application.create_task(trading_loop(application))
+
+# ====================================
 # START
 # ====================================
 
 if __name__ == "__main__":
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .post_init(post_init)
+        .build()
+    )
 
     app.add_handler(CommandHandler("status", status))
     app.add_handler(CommandHandler("positions", positions))
     app.add_handler(CommandHandler("history", history))
     app.add_handler(CommandHandler("pause", pause))
     app.add_handler(CommandHandler("resume", resume))
-
-    asyncio.get_event_loop().create_task(trading_loop(app))
 
     print("BOT RUNNING...")
 
