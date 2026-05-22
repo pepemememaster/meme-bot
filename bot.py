@@ -15,7 +15,7 @@ TAKE_PROFIT = 60
 STOP_LOSS = -20
 
 MIN_LIQUIDITY = 10000
-MIN_VOLUME_5M = 5000
+MIN_VOLUME_24H = 5000
 
 MAX_CONSECUTIVE_LOSSES = 5
 
@@ -177,7 +177,7 @@ def fetch_tokens():
 
                 if (
                     liquidity >= MIN_LIQUIDITY
-                    and volume >= MIN_VOLUME_5M
+                    and volume >= MIN_VOLUME_24H
                     and price > 0
                 ):
 
@@ -242,9 +242,7 @@ async def trading_loop(app):
 
                 volume = round(token_data["volume"], 2)
 
-                # =========================
-                # BUY SIGNAL
-                # =========================
+                # BUY
 
                 paper_trades += 1
 
@@ -273,11 +271,11 @@ SL: {STOP_LOSS}%
 """
                 )
 
-                # =========================
-                # TRACK PRICE
-                # =========================
+                # WAIT
 
                 await asyncio.sleep(15)
+
+                # REFRESH PRICE
 
                 updated_tokens = fetch_tokens()
 
@@ -300,9 +298,7 @@ SL: {STOP_LOSS}%
 
                 pnl_percent = round(pnl_percent, 2)
 
-                # =========================
                 # TP / SL
-                # =========================
 
                 should_sell = False
 
@@ -360,9 +356,7 @@ Held: {held_time}
 
                     del active_positions[token_name]
 
-                    # =========================
                     # AUTO PAUSE
-                    # =========================
 
                     if consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
 
@@ -386,10 +380,10 @@ Too many consecutive losses.
             await asyncio.sleep(10)
 
 # ====================================
-# MAIN
+# START
 # ====================================
 
-async def main():
+if __name__ == "__main__":
 
     app = Application.builder().token(BOT_TOKEN).build()
 
@@ -399,15 +393,8 @@ async def main():
     app.add_handler(CommandHandler("pause", pause))
     app.add_handler(CommandHandler("resume", resume))
 
-    asyncio.create_task(trading_loop(app))
+    asyncio.get_event_loop().create_task(trading_loop(app))
 
     print("BOT RUNNING...")
 
-    await app.run_polling()
-
-# ====================================
-# START
-# ====================================
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    app.run_polling()
