@@ -1,3 +1,8 @@
+# =========================================================
+# PUMP.FUN SAFE SIMULATION AI BOT
+# STABLE VERSION
+# =========================================================
+
 import os
 import time
 import random
@@ -11,9 +16,9 @@ from telegram.ext import (
     ContextTypes
 )
 
-# ======================================================
-# SETTINGS
-# ======================================================
+# =========================================================
+# TELEGRAM
+# =========================================================
 
 TELEGRAM_BOT_TOKEN = os.getenv(
     "TELEGRAM_BOT_TOKEN"
@@ -23,21 +28,27 @@ TELEGRAM_CHAT_ID = os.getenv(
     "TELEGRAM_CHAT_ID"
 )
 
-TAKE_PROFIT = 1.20
-STOP_LOSS = 0.90
+# =========================================================
+# SETTINGS
+# =========================================================
 
-SCAN_INTERVAL = 15
+TAKE_PROFIT = 1.35
+STOP_LOSS = 0.88
 
-MIN_LIQUIDITY = 35000
-MIN_VOLUME = 120000
+SCAN_INTERVAL = 12
 
-AI_SCORE_ENTRY = 78
+MIN_LIQUIDITY = 20000
+MIN_VOLUME = 80000
+
+AI_SCORE_ENTRY = 82
 
 MAX_ACTIVE_TRADES = 5
 
-# ======================================================
+MAX_TRADES_PER_DAY = 50
+
+# =========================================================
 # GLOBALS
-# ======================================================
+# =========================================================
 
 TOTAL_TRADES = 0
 WINS = 0
@@ -49,19 +60,23 @@ ACTIVE_TRADES = {}
 
 BOT_PAUSED = False
 
-# ======================================================
+TODAY_TRADES = 0
+
+BLACKLIST = [
+    "USDC",
+    "USDT",
+    "SOL",
+    "BONK"
+]
+
+# =========================================================
 # TELEGRAM COMMANDS
-# ======================================================
+# =========================================================
 
 async def status_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-
-    global TOTAL_TRADES
-    global WINS
-    global LOSSES
-    global TOTAL_PNL
 
     winrate = 0
 
@@ -72,10 +87,13 @@ async def status_command(
         ) * 100
 
     msg = f"""
-📊 BOT STATUS
+📊 PUMP.FUN STATUS
 
 Trades:
 {TOTAL_TRADES}
+
+Today:
+{TODAY_TRADES}
 
 Wins:
 {WINS}
@@ -98,7 +116,7 @@ Paused:
 
     await update.message.reply_text(msg)
 
-# ======================================================
+# =========================================================
 
 async def pnl_command(
     update: Update,
@@ -117,7 +135,7 @@ Trades:
 """
     )
 
-# ======================================================
+# =========================================================
 
 async def pause_command(
     update: Update,
@@ -134,7 +152,7 @@ async def pause_command(
 """
     )
 
-# ======================================================
+# =========================================================
 
 async def resume_command(
     update: Update,
@@ -151,7 +169,7 @@ async def resume_command(
 """
     )
 
-# ======================================================
+# =========================================================
 
 async def help_command(
     update: Update,
@@ -170,22 +188,21 @@ async def help_command(
 """
     )
 
-# ======================================================
-# MARKET SCAN
-# ======================================================
+# =========================================================
+# PUMP.FUN SCAN
+# =========================================================
 
 def get_tokens():
 
     try:
 
         url = (
-            "https://api.dexscreener.com/"
-            "latest/dex/search?q=solana"
+            "https://api.dexscreener.com/latest/dex/search?q=pump"
         )
 
         response = requests.get(
             url,
-            timeout=10
+            timeout=15
         )
 
         if response.status_code != 200:
@@ -197,14 +214,72 @@ def get_tokens():
 
         tokens = []
 
-        for pair in pairs[:120]:
+        for pair in pairs[:200]:
 
             try:
 
+                symbol = (
+                    pair["baseToken"]["symbol"]
+                )
+
+                if symbol in BLACKLIST:
+                    continue
+
+                liquidity = float(
+                    pair.get(
+                        "liquidity",
+                        {}
+                    ).get(
+                        "usd",
+                        0
+                    )
+                )
+
+                volume = float(
+                    pair.get(
+                        "volume",
+                        {}
+                    ).get(
+                        "h24",
+                        0
+                    )
+                )
+
+                buys = pair.get(
+                    "txns",
+                    {}
+                ).get(
+                    "h24",
+                    {}
+                ).get(
+                    "buys",
+                    0
+                )
+
+                sells = pair.get(
+                    "txns",
+                    {}
+                ).get(
+                    "h24",
+                    {}
+                ).get(
+                    "sells",
+                    0
+                )
+
+                price_change = float(
+                    pair.get(
+                        "priceChange",
+                        {}
+                    ).get(
+                        "h24",
+                        0
+                    )
+                )
+
                 token = {
 
-                    "symbol":
-                    pair["baseToken"]["symbol"],
+                    "symbol": symbol,
 
                     "price":
                     float(
@@ -215,26 +290,19 @@ def get_tokens():
                     ),
 
                     "liquidity":
-                    float(
-                        pair.get(
-                            "liquidity",
-                            {}
-                        ).get(
-                            "usd",
-                            0
-                        )
-                    ),
+                    liquidity,
 
                     "volume":
-                    float(
-                        pair.get(
-                            "volume",
-                            {}
-                        ).get(
-                            "h24",
-                            0
-                        )
-                    )
+                    volume,
+
+                    "buys":
+                    buys,
+
+                    "sells":
+                    sells,
+
+                    "price_change":
+                    price_change
 
                 }
 
@@ -251,27 +319,54 @@ def get_tokens():
 
         return []
 
-# ======================================================
+# =========================================================
 # AI SCORE
-# ======================================================
+# =========================================================
 
 def calculate_score(token):
 
     score = 0
 
-    if token["liquidity"] > 35000:
-        score += 40
+    if token["liquidity"] > 20000:
+        score += 20
 
-    if token["volume"] > 120000:
-        score += 40
+    if token["liquidity"] > 50000:
+        score += 10
 
-    score += random.randint(0, 20)
+    if token["volume"] > 80000:
+        score += 20
 
-    return score
+    if token["volume"] > 300000:
+        score += 15
 
-# ======================================================
-# SIMULATE TRADE
-# ======================================================
+    if token["price_change"] > 20:
+        score += 15
+
+    if token["buys"] > token["sells"]:
+        score += 20
+
+    return min(score, 100)
+
+# =========================================================
+# FILTER
+# =========================================================
+
+def is_safe(token):
+
+    if token["liquidity"] < MIN_LIQUIDITY:
+        return False
+
+    if token["volume"] < MIN_VOLUME:
+        return False
+
+    if token["buys"] <= token["sells"]:
+        return False
+
+    return True
+
+# =========================================================
+# SIMULATION
+# =========================================================
 
 def simulate_trade(token):
 
@@ -279,8 +374,12 @@ def simulate_trade(token):
     global WINS
     global LOSSES
     global TOTAL_PNL
+    global TODAY_TRADES
 
     symbol = token["symbol"]
+
+    if TODAY_TRADES >= MAX_TRADES_PER_DAY:
+        return
 
     if symbol in ACTIVE_TRADES:
         return
@@ -290,22 +389,28 @@ def simulate_trade(token):
 
     ACTIVE_TRADES[symbol] = True
 
+    TODAY_TRADES += 1
+
     buy_price = token["price"]
 
     print(f"BUY {symbol}")
 
+    highest = buy_price
     current = buy_price
 
-    for _ in range(20):
+    for _ in range(25):
 
         time.sleep(2)
 
         movement = random.uniform(
-            0.95,
-            1.12
+            0.92,
+            1.18
         )
 
         current *= movement
+
+        if current > highest:
+            highest = current
 
         pnl = (
             (
@@ -317,6 +422,19 @@ def simulate_trade(token):
             f"{symbol} "
             f"PnL: {pnl:.2f}%"
         )
+
+        if current <= buy_price * STOP_LOSS:
+
+            TOTAL_TRADES += 1
+            LOSSES += 1
+
+            TOTAL_PNL += pnl
+
+            print(f"STOP LOSS {symbol}")
+
+            ACTIVE_TRADES.pop(symbol)
+
+            return
 
         if current >= buy_price * TAKE_PROFIT:
 
@@ -331,30 +449,34 @@ def simulate_trade(token):
 
             return
 
-        if current <= buy_price * STOP_LOSS:
+        if highest >= buy_price * 2:
 
-            TOTAL_TRADES += 1
-            LOSSES += 1
+            trailing = highest * 0.78
 
-            TOTAL_PNL += pnl
+            if current <= trailing:
 
-            print(f"SL HIT {symbol}")
+                TOTAL_TRADES += 1
+                WINS += 1
 
-            ACTIVE_TRADES.pop(symbol)
+                TOTAL_PNL += pnl
 
-            return
+                print(f"MOON EXIT {symbol}")
+
+                ACTIVE_TRADES.pop(symbol)
+
+                return
 
     ACTIVE_TRADES.pop(symbol)
 
-# ======================================================
-# TRADING LOOP
-# ======================================================
+# =========================================================
+# LOOP
+# =========================================================
 
 def trading_loop():
 
     global BOT_PAUSED
 
-    print("BOT STARTED")
+    print("PUMP.FUN AI STARTED")
 
     while True:
 
@@ -372,16 +494,7 @@ def trading_loop():
 
             for token in tokens:
 
-                if (
-                    token["liquidity"]
-                    < MIN_LIQUIDITY
-                ):
-                    continue
-
-                if (
-                    token["volume"]
-                    < MIN_VOLUME
-                ):
+                if not is_safe(token):
                     continue
 
                 score = calculate_score(
@@ -390,14 +503,31 @@ def trading_loop():
 
                 if score >= AI_SCORE_ENTRY:
 
+                    print(
+                        f"""
+SIGNAL:
+{token['symbol']}
+AI:
+{score}
+"""
+                    )
+
                     simulate_trade(token)
 
             print(
-                f"Trades: {TOTAL_TRADES}"
-            )
+                f"""
+TOTAL:
+{TOTAL_TRADES}
 
-            print(
-                f"PnL: {TOTAL_PNL:.2f}%"
+WINS:
+{WINS}
+
+LOSSES:
+{LOSSES}
+
+PNL:
+{TOTAL_PNL:.2f}%
+"""
             )
 
             time.sleep(SCAN_INTERVAL)
@@ -408,9 +538,9 @@ def trading_loop():
 
             time.sleep(10)
 
-# ======================================================
+# =========================================================
 # MAIN
-# ======================================================
+# =========================================================
 
 def main():
 
@@ -463,13 +593,13 @@ def main():
 
     trading_thread.start()
 
-    print("Telegram Started")
+    print("TELEGRAM STARTED")
 
     app.run_polling()
 
-# ======================================================
+# =========================================================
 # START
-# ======================================================
+# =========================================================
 
 if __name__ == "__main__":
     main()
