@@ -4,23 +4,28 @@ import time
 import random
 import requests
 from telegram import Bot
+from datetime import datetime
 
-# ===== 基本設定 =====
+# ===== ENV =====
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 
-TAKE_PROFIT = 1.25
-STOP_LOSS = 0.90
+# ===== SETTINGS =====
 
-MIN_LIQUIDITY = 20000
-MIN_VOLUME = 50000
+TAKE_PROFIT = 1.30
+STOP_LOSS = 0.88
+
+MIN_LIQUIDITY = 25000
+MIN_VOLUME = 80000
+
+MAX_ACTIVE_TRADES = 5
 
 SCAN_INTERVAL = 30
 
-# ===== 統計 =====
+# ===== STATS =====
 
 TOTAL_PNL = 0
 TOTAL_TRADES = 0
@@ -29,41 +34,79 @@ LOSSES = 0
 
 ACTIVE_TRADES = {}
 
+# ===== BLACKLIST =====
+
 BLACKLIST = [
     "SCAM",
     "RUG",
-    "TEST"
+    "TEST",
+    "DOGSHIT",
 ]
 
-# ===== Telegram =====
+# ===== TELEGRAM =====
 
 def send_telegram(msg):
+
     print(msg)
 
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+
         try:
+
             bot.send_message(
                 chat_id=TELEGRAM_CHAT_ID,
                 text=msg
             )
+
         except Exception as e:
             print(e)
 
-# ===== Rug Filter =====
+# ===== AI SCORE =====
+
+def calculate_ai_score(token):
+
+    score = 0
+
+    liquidity = token["liquidity"]
+    volume = token["volume"]
+
+    if liquidity > 50000:
+        score += 30
+
+    if liquidity > 100000:
+        score += 20
+
+    if volume > 100000:
+        score += 25
+
+    if volume > 300000:
+        score += 25
+
+    momentum = random.randint(1, 20)
+
+    score += momentum
+
+    return min(score, 100)
+
+# ===== FILTER =====
 
 def is_blacklisted(symbol):
+
     for bad in BLACKLIST:
+
         if bad in symbol.upper():
             return True
+
     return False
 
-# ===== 熱門幣 =====
+# ===== TOKEN SCANNER =====
 
 def get_trending_tokens():
 
     url = "https://api.dexscreener.com/latest/dex/search?q=solana"
 
     try:
+
         response = requests.get(url)
 
         if response.status_code != 200:
@@ -116,6 +159,11 @@ def get_trending_tokens():
                 "chain": chain
             }
 
+            token["ai_score"] = calculate_ai_score(token)
+
+            if token["ai_score"] < 60:
+                continue
+
             tokens.append(token)
 
         except:
@@ -123,7 +171,7 @@ def get_trending_tokens():
 
     return tokens
 
-# ===== 安全檢查 =====
+# ===== SAFETY =====
 
 def is_safe(token):
 
@@ -132,7 +180,7 @@ def is_safe(token):
 
     return True
 
-# ===== 模擬交易 =====
+# ===== TRADE =====
 
 def simulate_trade(token):
 
@@ -146,17 +194,25 @@ def simulate_trade(token):
     if symbol in ACTIVE_TRADES:
         return
 
+    if len(ACTIVE_TRADES) >= MAX_ACTIVE_TRADES:
+        return
+
     buy_price = token["price"]
 
-    ACTIVE_TRADES[symbol] = True
+    ACTIVE_TRADES[symbol] = {
+        "buy_price": buy_price,
+        "time": datetime.now()
+    }
 
     send_telegram(
-        f"""
+f"""
 🚀 AUTO BUY
 
 Name: {token['name']}
 Symbol: {symbol}
 Chain: {token['chain']}
+
+AI Score: {token['ai_score']}/100
 
 Liquidity: ${token['liquidity']:.0f}
 24h Volume: ${token['volume']:.0f}
@@ -167,11 +223,11 @@ Buy Price: ${buy_price:.8f}
 
     current_price = buy_price
 
-    for i in range(20):
+    for i in range(30):
 
         time.sleep(2)
 
-        move = random.uniform(0.96, 1.08)
+        move = random.uniform(0.95, 1.10)
 
         current_price *= move
 
@@ -188,7 +244,7 @@ Buy Price: ${buy_price:.8f}
             WINS += 1
 
             send_telegram(
-                f"""
+f"""
 ✅ TAKE PROFIT
 
 {symbol}
@@ -206,7 +262,7 @@ PnL: +{pnl:.2f}%
             LOSSES += 1
 
             send_telegram(
-                f"""
+f"""
 🛑 STOP LOSS
 
 {symbol}
@@ -224,7 +280,7 @@ PnL: {pnl:.2f}%
         win_rate = (WINS / TOTAL_TRADES) * 100
 
         send_telegram(
-            f"""
+f"""
 📊 STATS
 
 Total Trades: {TOTAL_TRADES}
@@ -235,14 +291,16 @@ Losses: {LOSSES}
 Win Rate: {win_rate:.2f}%
 
 Total PnL: {TOTAL_PNL:.2f}%
+
+Active Trades: {len(ACTIVE_TRADES)}
 """
         )
 
-# ===== 主循環 =====
+# ===== MAIN =====
 
 def main():
 
-    send_telegram("🤖 Meme Sniper Started")
+    send_telegram("🤖 AI Meme Sniper Started")
 
     while True:
 
@@ -255,7 +313,9 @@ def main():
             for token in tokens:
 
                 print(
-                    f"SAFE => {token['symbol']} | "
+                    f"SAFE => "
+                    f"{token['symbol']} | "
+                    f"AI {token['ai_score']} | "
                     f"Liq ${token['liquidity']:.0f}"
                 )
 
@@ -271,7 +331,7 @@ def main():
 
             time.sleep(10)
 
-# ===== 啟動 =====
+# ===== START =====
 
 if __name__ == "__main__":
     main()
