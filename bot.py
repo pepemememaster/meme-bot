@@ -525,7 +525,8 @@ def start_trading(app):
     asyncio.set_event_loop(loop)
 
     loop.run_until_complete(
-        trading_loop(
+        trading_loop(app)
+        )
 # ====================================
 # START
 # ====================================
