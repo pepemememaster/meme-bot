@@ -28,7 +28,18 @@ WATCHLIST = [
 
 def send_telegram(msg):
     try:
-        bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg)
+        def send_telegram(msg):
+    import asyncio
+
+    try:
+        asyncio.run(
+            bot.send_message(
+                chat_id=TELEGRAM_CHAT_ID,
+                text=msg
+            )
+        )
+    except Exception as e:
+        print(e)
     except Exception as e:
         print("Telegram error:", e)
 
