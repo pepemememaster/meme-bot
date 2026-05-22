@@ -4,65 +4,65 @@ import time
 import random
 import asyncio
 import requests
-from datetime import datetime, timedelta
 
+from datetime import datetime, timedelta
 from telegram import Bot
 
-# ====================================
+# =========================================
 # TELEGRAM
-# ====================================
+# =========================================
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 
-# ====================================
-# SETTINGS
-# ====================================
+# =========================================
+# HYBRID SETTINGS
+# =========================================
 
-TAKE_PROFIT = 1.35
-STOP_LOSS = 0.82
+TP1 = 1.18
+TP2 = 1.45
 
-MIN_LIQUIDITY = 15000
-MIN_VOLUME = 60000
+STOP_LOSS = 0.90
 
-MAX_ACTIVE_TRADES = 3
+TRAILING_TRIGGER = 1.25
+TRAILING_STOP = 0.20
 
-SCAN_INTERVAL = 30
+MIN_LIQUIDITY = 40000
+MIN_VOLUME = 150000
 
-# ====================================
+MAX_ACTIVE_TRADES = 2
+
+MAX_DAILY_TRADES = 20
+MAX_DAILY_LOSS = -15
+
+SCAN_INTERVAL = 45
+
+# =========================================
 # STATS
-# ====================================
+# =========================================
 
 TOTAL_PNL = 0
 TOTAL_TRADES = 0
+
+DAILY_PNL = 0
+DAILY_TRADES = 0
+
 WINS = 0
 LOSSES = 0
-
-ACTIVE_TRADES = {}
-
-RECENT_TOKENS = set()
 
 LOSS_STREAK = 0
 
 COOLDOWN_UNTIL = None
 
-# ====================================
-# BLACKLIST
-# ====================================
+ACTIVE_TRADES = {}
 
-BLACKLIST = [
-    "SCAM",
-    "RUG",
-    "TEST",
-    "DOGSHIT",
-    "PONZI"
-]
+WATCHLIST = {}
 
-# ====================================
+# =========================================
 # TELEGRAM
-# ====================================
+# =========================================
 
 def send_telegram(msg):
 
@@ -80,15 +80,15 @@ def send_telegram(msg):
                 )
 
             except Exception as e:
-                print("Telegram Error:", e)
+                print(e)
 
         asyncio.run(send())
 
-# ====================================
-# DEX API
-# ====================================
+# =========================================
+# TOKEN SCAN
+# =========================================
 
-def get_trending_tokens():
+def get_tokens():
 
     try:
 
@@ -96,64 +96,49 @@ def get_trending_tokens():
 
         response = requests.get(url, timeout=10)
 
-        if response.status_code != 200:
-            return []
-
         data = response.json()
 
         pairs = data.get("pairs", [])
 
         tokens = []
 
-        for pair in pairs[:30]:
+        for pair in pairs[:40]:
 
             try:
 
-                liquidity = float(
-                    pair.get("liquidity", {}).get("usd", 0)
-                )
-
-                volume = float(
-                    pair.get("volume", {}).get("h24", 0)
-                )
-
-                price = float(
-                    pair.get("priceUsd", 0)
-                )
-
-                symbol = pair["baseToken"]["symbol"]
-
-                name = pair["baseToken"]["name"]
-
-                age_minutes = random.randint(2, 180)
-
-                buys = random.randint(20, 500)
-
-                sells = random.randint(5, 250)
-
-                holders = random.randint(100, 4000)
-
-                price_change = random.uniform(-20, 180)
-
-                dev_wallet_percent = random.uniform(0, 25)
-
-                fake_volume_score = random.randint(0, 100)
-
                 token = {
 
-                    "name": name,
-                    "symbol": symbol,
-                    "price": price,
-                    "liquidity": liquidity,
-                    "volume": volume,
-                    "age_minutes": age_minutes,
-                    "buys": buys,
-                    "sells": sells,
-                    "holders": holders,
-                    "price_change": price_change,
-                    "dev_wallet_percent": dev_wallet_percent,
-                    "fake_volume_score": fake_volume_score,
-                    "chain": "solana"
+                    "name": pair["baseToken"]["name"],
+
+                    "symbol": pair["baseToken"]["symbol"],
+
+                    "price": float(
+                        pair.get("priceUsd", 0)
+                    ),
+
+                    "liquidity": float(
+                        pair.get("liquidity", {}).get("usd", 0)
+                    ),
+
+                    "volume": float(
+                        pair.get("volume", {}).get("h24", 0)
+                    ),
+
+                    "holders": random.randint(300, 6000),
+
+                    "age_minutes": random.randint(5, 120),
+
+                    "price_change": random.uniform(
+                        -10, 200
+                    ),
+
+                    "buys": random.randint(50, 1200),
+
+                    "sells": random.randint(10, 400),
+
+                    "dev_wallet": random.uniform(0, 20),
+
+                    "fake_volume": random.randint(0, 100)
 
                 }
 
@@ -166,89 +151,50 @@ def get_trending_tokens():
 
     except Exception as e:
 
-        print("Dex Error:", e)
+        print("DEX ERROR", e)
 
         return []
 
-# ====================================
+# =========================================
 # AI SCORE
-# ====================================
+# =========================================
 
 def calculate_score(token):
 
     score = 0
 
-    # liquidity
-
-    if token["liquidity"] > 20000:
+    if token["liquidity"] > 40000:
         score += 15
 
-    if token["liquidity"] > 50000:
+    if token["liquidity"] > 100000:
+        score += 15
+
+    if token["volume"] > 150000:
         score += 20
-
-    # volume
-
-    if token["volume"] > 100000:
-        score += 15
 
     if token["volume"] > 500000:
-        score += 20
-
-    # momentum
-
-    if token["price_change"] > 20:
-        score += 20
-
-    if token["price_change"] > 60:
         score += 15
 
-    # new launch
+    if token["price_change"] > 20:
+        score += 15
 
-    if token["age_minutes"] < 45:
-        score += 20
-
-    # buy pressure
+    if token["price_change"] > 60:
+        score += 10
 
     if token["buys"] > token["sells"] * 2:
-        score += 20
-
-    # holder growth
+        score += 15
 
     if token["holders"] > 500:
         score += 10
 
+    if token["age_minutes"] < 45:
+        score += 10
+
     return min(score, 100)
 
-# ====================================
-# RUG FILTER
-# ====================================
-
-def is_rug_risk(token):
-
-    if token["dev_wallet_percent"] > 15:
-        return True
-
-    if token["fake_volume_score"] > 80:
-        return True
-
-    return False
-
-# ====================================
-# BLACKLIST
-# ====================================
-
-def is_blacklisted(symbol):
-
-    for bad in BLACKLIST:
-
-        if bad in symbol.upper():
-            return True
-
-    return False
-
-# ====================================
-# SAFETY
-# ====================================
+# =========================================
+# FILTER
+# =========================================
 
 def is_safe(token):
 
@@ -258,27 +204,32 @@ def is_safe(token):
     if token["volume"] < MIN_VOLUME:
         return False
 
-    if token["holders"] < 150:
+    if token["holders"] < 300:
         return False
 
-    if is_blacklisted(token["symbol"]):
+    if token["dev_wallet"] > 12:
         return False
 
-    if is_rug_risk(token):
+    if token["fake_volume"] > 75:
         return False
 
     return True
 
-# ====================================
+# =========================================
 # TRADE
-# ====================================
+# =========================================
 
 def simulate_trade(token):
 
     global TOTAL_PNL
     global TOTAL_TRADES
+
+    global DAILY_PNL
+    global DAILY_TRADES
+
     global WINS
     global LOSSES
+
     global LOSS_STREAK
     global COOLDOWN_UNTIL
 
@@ -287,29 +238,26 @@ def simulate_trade(token):
     if symbol in ACTIVE_TRADES:
         return
 
-    if symbol in RECENT_TOKENS:
-        return
-
     if len(ACTIVE_TRADES) >= MAX_ACTIVE_TRADES:
         return
 
-    RECENT_TOKENS.add(symbol)
+    if DAILY_TRADES >= MAX_DAILY_TRADES:
+        return
+
+    DAILY_TRADES += 1
 
     buy_price = token["price"]
 
-    ACTIVE_TRADES[symbol] = {
-        "buy_price": buy_price,
-        "time": datetime.now()
-    }
+    ACTIVE_TRADES[symbol] = True
 
     send_telegram(
 f"""
-🚀 SNIPER ENTRY
+🚀 HYBRID ENTRY
 
-{token['name']}
 {symbol}
 
-AI Score: {token['score']}/100
+AI Score:
+{token['score']}/100
 
 Liquidity:
 ${token['liquidity']:.0f}
@@ -317,72 +265,43 @@ ${token['liquidity']:.0f}
 Volume:
 ${token['volume']:.0f}
 
-Price Change:
-{token['price_change']:.2f}%
-
-Age:
-{token['age_minutes']} min
-
-Buy Pressure:
-{token['buys']} / {token['sells']}
-
-BUY PRICE:
+BUY:
 ${buy_price:.8f}
 """
     )
 
     current_price = buy_price
 
-    for i in range(25):
+    highest_price = buy_price
+
+    tp1_hit = False
+    tp2_hit = False
+
+    for i in range(45):
 
         time.sleep(2)
 
-        movement = random.uniform(0.90, 1.15)
+        movement = random.uniform(0.95, 1.12)
 
         current_price *= movement
 
         pnl = ((current_price / buy_price) - 1) * 100
 
+        if current_price > highest_price:
+            highest_price = current_price
+
         print(
-            f"[{symbol}] Current {current_price:.8f} | PnL {pnl:.2f}%"
+            f"{symbol} | "
+            f"PnL {pnl:.2f}%"
         )
-
-        # TAKE PROFIT
-
-        if current_price >= buy_price * TAKE_PROFIT:
-
-            TOTAL_PNL += pnl
-            TOTAL_TRADES += 1
-            WINS += 1
-
-            LOSS_STREAK = 0
-
-            send_telegram(
-f"""
-✅ TAKE PROFIT
-
-{symbol}
-
-PnL:
-+{pnl:.2f}%
-
-Win Rate:
-{(WINS / TOTAL_TRADES) * 100:.2f}%
-
-Total PnL:
-{TOTAL_PNL:.2f}%
-"""
-            )
-
-            ACTIVE_TRADES.pop(symbol, None)
-
-            return
 
         # STOP LOSS
 
         if current_price <= buy_price * STOP_LOSS:
 
             TOTAL_PNL += pnl
+            DAILY_PNL += pnl
+
             TOTAL_TRADES += 1
             LOSSES += 1
 
@@ -396,9 +315,6 @@ f"""
 
 PnL:
 {pnl:.2f}%
-
-Loss Streak:
-{LOSS_STREAK}
 """
             )
 
@@ -408,29 +324,127 @@ Loss Streak:
 
             if LOSS_STREAK >= 3:
 
-                COOLDOWN_UNTIL = datetime.now() + timedelta(minutes=10)
+                COOLDOWN_UNTIL = (
+                    datetime.now()
+                    + timedelta(minutes=20)
+                )
 
                 send_telegram(
 """
-❄️ COOLDOWN MODE
+❄️ SAFE MODE
 
 3 losses in a row.
 
-Pausing bot for 10 minutes.
+Cooldown 20 min.
 """
                 )
 
             return
 
+        # TP1
+
+        if (
+            not tp1_hit
+            and current_price >= buy_price * TP1
+        ):
+
+            tp1_hit = True
+
+            send_telegram(
+f"""
+✅ TP1 HIT
+
+{symbol}
+
+Sold 50%
+
+PnL:
++18%
+"""
+            )
+
+        # TP2
+
+        if (
+            not tp2_hit
+            and current_price >= buy_price * TP2
+        ):
+
+            tp2_hit = True
+
+            send_telegram(
+f"""
+🚀 TP2 HIT
+
+{symbol}
+
+Sold 30%
+
+Moonbag Left:
+20%
+"""
+            )
+
+        # TRAILING STOP
+
+        if highest_price >= buy_price * TRAILING_TRIGGER:
+
+            trailing_price = (
+                highest_price
+                * (1 - TRAILING_STOP)
+            )
+
+            if current_price <= trailing_price:
+
+                final_pnl = (
+                    (
+                        current_price
+                        / buy_price
+                    ) - 1
+                ) * 100
+
+                TOTAL_PNL += final_pnl
+                DAILY_PNL += final_pnl
+
+                TOTAL_TRADES += 1
+                WINS += 1
+
+                LOSS_STREAK = 0
+
+                send_telegram(
+f"""
+🌕 MOON EXIT
+
+{symbol}
+
+Final PnL:
++{final_pnl:.2f}%
+
+Highest Gain:
++{((highest_price / buy_price)-1)*100:.2f}%
+"""
+                )
+
+                ACTIVE_TRADES.pop(symbol, None)
+
+                return
+
     ACTIVE_TRADES.pop(symbol, None)
 
-# ====================================
+# =========================================
 # MAIN
-# ====================================
+# =========================================
 
 def main():
 
-    send_telegram("🤖 PHASE 3 AI SNIPER STARTED")
+    send_telegram(
+"""
+🤖 HYBRID STABLE MOON BOT STARTED
+
+Mode:
+SAFE + MOON
+"""
+    )
 
     while True:
 
@@ -438,13 +452,32 @@ def main():
 
             global COOLDOWN_UNTIL
 
+            # daily loss limit
+
+            if DAILY_PNL <= MAX_DAILY_LOSS:
+
+                send_telegram(
+f"""
+🛑 DAILY LOSS LIMIT
+
+Daily PnL:
+{DAILY_PNL:.2f}%
+
+Bot paused.
+"""
+                )
+
+                time.sleep(3600)
+
+                continue
+
             # cooldown
 
             if COOLDOWN_UNTIL:
 
                 if datetime.now() < COOLDOWN_UNTIL:
 
-                    print("Cooldown active...")
+                    print("Cooldown active")
 
                     time.sleep(30)
 
@@ -454,41 +487,49 @@ def main():
 
                     COOLDOWN_UNTIL = None
 
-                    LOSS_STREAK = 0
-
                     send_telegram(
 """
 ✅ COOLDOWN FINISHED
 
-Bot resumed trading.
+Bot resumed.
 """
                     )
 
-            tokens = get_trending_tokens()
+            tokens = get_tokens()
 
-            print(f"Found {len(tokens)} tokens")
+            print(f"Found {len(tokens)}")
 
             for token in tokens:
 
                 token["score"] = calculate_score(token)
 
-                print(
-                    f"{token['symbol']} | "
-                    f"Score {token['score']}"
-                )
-
                 if not is_safe(token):
                     continue
 
-                # 強 momentum
+                symbol = token["symbol"]
 
-                if token["score"] >= 75:
+                # double confirmation
+
+                if symbol not in WATCHLIST:
+
+                    WATCHLIST[symbol] = 1
+
+                    continue
+
+                WATCHLIST[symbol] += 1
+
+                # ultra high quality only
+
+                if (
+                    WATCHLIST[symbol] >= 2
+                    and token["score"] >= 90
+                ):
 
                     send_telegram(
 f"""
-🔥 PUMP DETECTED
+🔥 ELITE SIGNAL
 
-{token['symbol']}
+{symbol}
 
 AI Score:
 {token['score']}
@@ -501,13 +542,13 @@ AI Score:
 
         except Exception as e:
 
-            print("MAIN ERROR:", e)
+            print("MAIN ERROR", e)
 
             time.sleep(10)
 
-# ====================================
+# =========================================
 # START
-# ====================================
+# =========================================
 
 if __name__ == "__main__":
     main()
