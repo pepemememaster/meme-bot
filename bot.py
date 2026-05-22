@@ -19,7 +19,16 @@ def get_trending_tokens():
     url = "https://api.dexscreener.com/latest/dex/search?q=solana"
 
     response = requests.get(url)
-    data = response.json()
+
+    if response.status_code != 200:
+        print("Dex API Error")
+        return []
+
+    try:
+        data = response.json()
+    except:
+        print("JSON Error")
+        return []
 
     pairs = data.get("pairs", [])
 
