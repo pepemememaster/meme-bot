@@ -525,12 +525,14 @@ def start_trading(app):
     asyncio.set_event_loop(loop)
 
     loop.run_until_complete(
-        trading_loop(app)
-    )
-
+        trading_loop(
 # ====================================
 # START
 # ====================================
+
+import nest_asyncio
+
+nest_asyncio.apply()
 
 if __name__ == "__main__":
 
@@ -539,10 +541,6 @@ if __name__ == "__main__":
         .token(BOT_TOKEN)
         .build()
     )
-
-    # ================================
-    # COMMANDS
-    # ================================
 
     app.add_handler(
         CommandHandler(
@@ -579,30 +577,15 @@ if __name__ == "__main__":
         )
     )
 
-    # ================================
-    # START THREAD
-    # ================================
-
-    trading_thread = threading.Thread(
-
-        target=start_trading,
-
-        args=(app,),
-
-        daemon=False
-
-    )
-
-    trading_thread.start()
-
     print("🚀 BOT RUNNING...")
 
-    # ================================
-    # TELEGRAM
-    # ================================
+    asyncio.create_task(
+        trading_loop(app)
+    )
 
     app.run_polling(
-    drop_pending_updates=True,
-    close_loop=False,
-    stop_signals=None
-)
+        drop_pending_updates=True,
+        allowed_updates=[],
+        close_loop=False,
+        stop_signals=None
+    )
