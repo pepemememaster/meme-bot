@@ -15,17 +15,33 @@ STOP_LOSS = 0.88
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 
 # ===== 模擬 Token 資料 =====
-WATCHLIST = [
-    {
-        "name": "ExampleToken",
-        "symbol": "EXM",
-        "price": 0.01,
-        "liquidity": 20000,
-        "holders": 500,
-        "mint_enabled": False
-    }
-]
+def get_trending_tokens():
+    url = "https://api.dexscreener.com/latest/dex/search?q=solana"
 
+    response = requests.get(url)
+    data = response.json()
+
+    pairs = data.get("pairs", [])
+
+    tokens = []
+
+    for pair in pairs[:10]:
+        try:
+            token = {
+                "name": pair["baseToken"]["name"],
+                "symbol": pair["baseToken"]["symbol"],
+                "price": float(pair["priceUsd"]),
+                "liquidity": float(pair["liquidity"]["usd"]),
+                "holders": 500,
+                "mint_enabled": False
+            }
+
+            tokens.append(token)
+
+        except:
+            continue
+
+    return tokens
 def send_telegram(msg):
     print(msg)
 
@@ -80,7 +96,7 @@ def main():
     send_telegram("🤖 Meme Bot Started")
 
     while True:
-        for token in WATCHLIST:
+        for token in get_trending_tokens():
             if is_safe(token):
                 simulate_trade(token)
 
