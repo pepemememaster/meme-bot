@@ -1,10 +1,12 @@
 # =========================================================
-# PUMP.FUN REAL MARKET PAPER TRADING BOT
-# FULL REAL DATA VERSION
+# ADVANCED REAL MARKET PAPER TRADING BOT
+# REAL EXECUTION SIMULATION VERSION
+# 100 TRADES DAILY MODE
 # =========================================================
 
 import os
 import time
+import random
 import threading
 import requests
 
@@ -27,18 +29,36 @@ TELEGRAM_BOT_TOKEN = os.getenv(
 # SETTINGS
 # =========================================================
 
-TAKE_PROFIT = 1.35
-STOP_LOSS = 0.88
+TAKE_PROFIT = 1.28
+STOP_LOSS = 0.90
 
-SCAN_INTERVAL = 12
+SCAN_INTERVAL = 8
 
-MIN_LIQUIDITY = 20000
-MIN_VOLUME = 80000
+MIN_LIQUIDITY = 25000
+MIN_VOLUME = 90000
 
-AI_SCORE_ENTRY = 82
+AI_SCORE_ENTRY = 75
 
-MAX_ACTIVE_TRADES = 5
-MAX_TRADES_PER_DAY = 50
+MAX_ACTIVE_TRADES = 7
+MAX_TRADES_PER_DAY = 100
+
+# =========================================================
+# REAL EXECUTION SETTINGS
+# =========================================================
+
+BUY_SLIPPAGE_MIN = 1.01
+BUY_SLIPPAGE_MAX = 1.06
+
+SELL_SLIPPAGE_MIN = 0.94
+SELL_SLIPPAGE_MAX = 0.99
+
+RUG_SELL_FAIL_CHANCE = 0.12
+
+TRADE_TIMEOUT = 90
+
+MAX_CONSECUTIVE_LOSSES = 4
+
+DAILY_MAX_LOSS = -35
 
 # =========================================================
 # GLOBALS
@@ -55,6 +75,8 @@ ACTIVE_TRADES = {}
 BOT_PAUSED = False
 
 TODAY_TRADES = 0
+
+CONSECUTIVE_LOSSES = 0
 
 BLACKLIST = [
     "USDC",
@@ -81,7 +103,7 @@ async def status_command(
         ) * 100
 
     msg = f"""
-📊 REAL MARKET STATUS
+📊 ADVANCED PAPER TRADING
 
 Trades:
 {TOTAL_TRADES}
@@ -101,7 +123,10 @@ Win Rate:
 PnL:
 {TOTAL_PNL:.2f}%
 
-Active:
+Consecutive Losses:
+{CONSECUTIVE_LOSSES}
+
+Active Trades:
 {len(ACTIVE_TRADES)}
 
 Paused:
@@ -183,7 +208,7 @@ async def help_command(
     )
 
 # =========================================================
-# PUMP.FUN SCAN
+# MARKET SCAN
 # =========================================================
 
 def get_tokens():
@@ -208,7 +233,7 @@ def get_tokens():
 
         tokens = []
 
-        for pair in pairs[:200]:
+        for pair in pairs[:250]:
 
             try:
 
@@ -321,20 +346,20 @@ def calculate_score(token):
 
     score = 0
 
-    if token["liquidity"] > 20000:
+    if token["liquidity"] > 25000:
         score += 20
 
-    if token["liquidity"] > 50000:
+    if token["liquidity"] > 60000:
         score += 10
 
-    if token["volume"] > 80000:
+    if token["volume"] > 90000:
         score += 20
 
-    if token["volume"] > 300000:
-        score += 15
+    if token["volume"] > 400000:
+        score += 20
 
-    if token["price_change"] > 20:
-        score += 15
+    if token["price_change"] > 15:
+        score += 10
 
     if token["buys"] > token["sells"]:
         score += 20
@@ -359,7 +384,7 @@ def is_safe(token):
     return True
 
 # =========================================================
-# REAL LIVE PRICE
+# LIVE PRICE
 # =========================================================
 
 def get_live_price(symbol):
@@ -399,7 +424,7 @@ def get_live_price(symbol):
         return None
 
 # =========================================================
-# REAL MARKET PAPER TRADE
+# ADVANCED PAPER TRADE
 # =========================================================
 
 def simulate_trade(token):
@@ -409,6 +434,24 @@ def simulate_trade(token):
     global LOSSES
     global TOTAL_PNL
     global TODAY_TRADES
+    global CONSECUTIVE_LOSSES
+    global BOT_PAUSED
+
+    if TOTAL_PNL <= DAILY_MAX_LOSS:
+
+        BOT_PAUSED = True
+
+        print("DAILY LOSS LIMIT HIT")
+
+        return
+
+    if CONSECUTIVE_LOSSES >= MAX_CONSECUTIVE_LOSSES:
+
+        BOT_PAUSED = True
+
+        print("MAX LOSING STREAK HIT")
+
+        return
 
     symbol = token["symbol"]
 
@@ -425,19 +468,35 @@ def simulate_trade(token):
 
     TODAY_TRADES += 1
 
-    buy_price = token["price"]
+    market_price = token["price"]
+
+    # =====================================================
+    # REAL BUY SLIPPAGE
+    # =====================================================
+
+    buy_price = (
+        market_price *
+        random.uniform(
+            BUY_SLIPPAGE_MIN,
+            BUY_SLIPPAGE_MAX
+        )
+    )
 
     highest = buy_price
 
     print(f"""
 🚀 BUY
+
 {symbol}
 
-ENTRY:
-{buy_price}
+MARKET:
+{market_price:.8f}
+
+FILLED:
+{buy_price:.8f}
 """)
 
-    for _ in range(120):
+    for _ in range(TRADE_TIMEOUT):
 
         time.sleep(5)
 
@@ -445,6 +504,28 @@ ENTRY:
 
         if current is None:
             continue
+
+        # =================================================
+        # REAL SELL SLIPPAGE
+        # =================================================
+
+        current = (
+            current *
+            random.uniform(
+                SELL_SLIPPAGE_MIN,
+                SELL_SLIPPAGE_MAX
+            )
+        )
+
+        # =================================================
+        # RUG FAIL SIMULATION
+        # =================================================
+
+        if current <= buy_price * 0.5:
+
+            if random.random() <= RUG_SELL_FAIL_CHANCE:
+
+                current *= 0.5
 
         if current > highest:
             highest = current
@@ -455,8 +536,7 @@ ENTRY:
             ) - 1
         ) * 100
 
-        print(
-            f"""
+        print(f"""
 {symbol}
 
 ENTRY:
@@ -467,17 +547,18 @@ CURRENT:
 
 PNL:
 {pnl:.2f}%
-"""
-        )
+""")
 
-        # =========================
+        # =================================================
         # STOP LOSS
-        # =========================
+        # =================================================
 
         if current <= buy_price * STOP_LOSS:
 
             TOTAL_TRADES += 1
             LOSSES += 1
+
+            CONSECUTIVE_LOSSES += 1
 
             TOTAL_PNL += pnl
 
@@ -494,14 +575,16 @@ FINAL:
 
             return
 
-        # =========================
+        # =================================================
         # TAKE PROFIT
-        # =========================
+        # =================================================
 
         if current >= buy_price * TAKE_PROFIT:
 
             TOTAL_TRADES += 1
             WINS += 1
+
+            CONSECUTIVE_LOSSES = 0
 
             TOTAL_PNL += pnl
 
@@ -518,18 +601,20 @@ FINAL:
 
             return
 
-        # =========================
-        # MOON BAG
-        # =========================
+        # =================================================
+        # MOON EXIT
+        # =================================================
 
         if highest >= buy_price * 2:
 
-            trailing = highest * 0.75
+            trailing = highest * 0.72
 
             if current <= trailing:
 
                 TOTAL_TRADES += 1
                 WINS += 1
+
+                CONSECUTIVE_LOSSES = 0
 
                 TOTAL_PNL += pnl
 
@@ -546,13 +631,18 @@ FINAL:
 
                 return
 
-    # =========================
+    # =====================================================
     # TIME EXIT
-    # =========================
+    # =====================================================
 
     final_price = get_live_price(symbol)
 
     if final_price:
+
+        final_price *= random.uniform(
+            SELL_SLIPPAGE_MIN,
+            SELL_SLIPPAGE_MAX
+        )
 
         pnl = (
             (
@@ -563,9 +653,16 @@ FINAL:
         TOTAL_TRADES += 1
 
         if pnl > 0:
+
             WINS += 1
+
+            CONSECUTIVE_LOSSES = 0
+
         else:
+
             LOSSES += 1
+
+            CONSECUTIVE_LOSSES += 1
 
         TOTAL_PNL += pnl
 
@@ -588,7 +685,7 @@ def trading_loop():
 
     global BOT_PAUSED
 
-    print("REAL MARKET BOT STARTED")
+    print("ADVANCED PAPER BOT STARTED")
 
     while True:
 
@@ -598,7 +695,7 @@ def trading_loop():
 
                 print("BOT PAUSED")
 
-                time.sleep(10)
+                time.sleep(30)
 
                 continue
 
@@ -615,20 +712,18 @@ def trading_loop():
 
                 if score >= AI_SCORE_ENTRY:
 
-                    print(
-                        f"""
+                    print(f"""
 🔥 SIGNAL
+
 {token['symbol']}
 
-AI:
+AI SCORE:
 {score}
-"""
-                    )
+""")
 
                     simulate_trade(token)
 
-            print(
-                f"""
+            print(f"""
 ====================
 
 TOTAL:
@@ -643,9 +738,11 @@ LOSSES:
 PNL:
 {TOTAL_PNL:.2f}%
 
+LOSS STREAK:
+{CONSECUTIVE_LOSSES}
+
 ====================
-"""
-            )
+""")
 
             time.sleep(SCAN_INTERVAL)
 
