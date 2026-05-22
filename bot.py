@@ -1,12 +1,12 @@
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 import asyncio
-import random
+import requests
 from datetime import datetime
 
-# =========================
+# ====================================
 # CONFIG
-# =========================
+# ====================================
 
 BOT_TOKEN = "YOUR_BOT_TOKEN"
 CHAT_ID = "YOUR_CHAT_ID"
@@ -14,11 +14,16 @@ CHAT_ID = "YOUR_CHAT_ID"
 TAKE_PROFIT = 60
 STOP_LOSS = -20
 
+MIN_LIQUIDITY = 10000
+MIN_VOLUME_5M = 5000
+
 MAX_CONSECUTIVE_LOSSES = 5
 
-# =========================
+CHECK_INTERVAL = 30
+
+# ====================================
 # GLOBAL STATS
-# =========================
+# ====================================
 
 paper_trades = 0
 wins = 0
@@ -30,33 +35,11 @@ paused = False
 active_positions = {}
 trade_history = []
 
-# =========================
-# SAMPLE TOKENS
-# =========================
-
-sample_tokens = [
-    "PEPEAI",
-    "BRAINCAT",
-    "DOGWIFAI",
-    "SIGMAGOBLIN",
-    "HYPERFROG",
-    "CHAOSCAT",
-    "MEMEENGINE",
-    "BASEDPEPE",
-]
-
-# =========================
+# ====================================
 # STATUS COMMAND
-# =========================
+# ====================================
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    global paper_trades
-    global wins
-    global losses
-    global pnl_total
-    global consecutive_losses
-    global paused
 
     total = wins + losses
 
@@ -66,7 +49,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         winrate = 0
 
     text = f"""
-📊 ADVANCED PAPER TRADING
+📊 REAL MARKET PAPER TRADING
 
 Trades: {paper_trades}
 
@@ -86,9 +69,9 @@ Paused: {paused}
 
     await update.message.reply_text(text)
 
-# =========================
+# ====================================
 # POSITIONS COMMAND
-# =========================
+# ====================================
 
 async def positions(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -100,19 +83,27 @@ async def positions(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for token, data in active_positions.items():
 
+        pnl = (
+            (data["current_price"] - data["entry_price"])
+            / data["entry_price"]
+        ) * 100
+
         text += f"""
 Token: {token}
+
 Entry: {data['entry_price']}
 Current: {data['current_price']}
-Liquidity: ${data['liquidity']}
 
+PnL: {pnl:.2f}%
+
+Liquidity: ${data['liquidity']}
 """
 
     await update.message.reply_text(text)
 
-# =========================
+# ====================================
 # HISTORY COMMAND
-# =========================
+# ====================================
 
 async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -128,15 +119,15 @@ async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         text += f"""
 {emoji} {trade['token']}
-PnL: {trade['pnl']:.2f}%
 
+PnL: {trade['pnl']:.2f}%
 """
 
     await update.message.reply_text(text)
 
-# =========================
-# PAUSE COMMAND
-# =========================
+# ====================================
+# PAUSE / RESUME
+# ====================================
 
 async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -146,10 +137,6 @@ async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("⏸ Bot paused.")
 
-# =========================
-# RESUME COMMAND
-# =========================
-
 async def resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     global paused
@@ -158,9 +145,63 @@ async def resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("✅ Bot resumed.")
 
-# =========================
-# SIMULATED TRADING LOOP
-# =========================
+# ====================================
+# FETCH TOKENS
+# ====================================
+
+def fetch_tokens():
+
+    try:
+
+        url = "https://api.dexscreener.com/latest/dex/search/?q=SOL"
+
+        response = requests.get(url, timeout=10)
+
+        data = response.json()
+
+        pairs = data.get("pairs", [])
+
+        valid_tokens = []
+
+        for pair in pairs:
+
+            try:
+
+                liquidity = pair.get("liquidity", {}).get("usd", 0)
+
+                volume = pair.get("volume", {}).get("h24", 0)
+
+                price = float(pair.get("priceUsd", 0))
+
+                token_name = pair["baseToken"]["symbol"]
+
+                if (
+                    liquidity >= MIN_LIQUIDITY
+                    and volume >= MIN_VOLUME_5M
+                    and price > 0
+                ):
+
+                    valid_tokens.append({
+                        "token": token_name,
+                        "price": price,
+                        "liquidity": liquidity,
+                        "volume": volume
+                    })
+
+            except:
+                pass
+
+        return valid_tokens
+
+    except Exception as e:
+
+        print("FETCH ERROR:", e)
+
+        return []
+
+# ====================================
+# TRADING LOOP
+# ====================================
 
 async def trading_loop(app):
 
@@ -176,31 +217,47 @@ async def trading_loop(app):
         try:
 
             if paused:
-                await asyncio.sleep(15)
+                await asyncio.sleep(10)
                 continue
 
-            # RANDOM TOKEN
+            tokens = fetch_tokens()
 
-            token_name = random.choice(sample_tokens)
+            if not tokens:
 
-            entry_price = round(random.uniform(0.00001, 0.001), 8)
+                print("NO TOKENS FOUND")
 
-            liquidity = random.randint(5000, 100000)
+                await asyncio.sleep(20)
+                continue
 
-            # BUY
+            for token_data in tokens[:3]:
 
-            paper_trades += 1
+                token_name = token_data["token"]
 
-            active_positions[token_name] = {
-                "entry_price": entry_price,
-                "current_price": entry_price,
-                "liquidity": liquidity,
-                "timestamp": datetime.now()
-            }
+                if token_name in active_positions:
+                    continue
 
-            await app.bot.send_message(
-                chat_id=CHAT_ID,
-                text=f"""
+                entry_price = token_data["price"]
+
+                liquidity = round(token_data["liquidity"], 2)
+
+                volume = round(token_data["volume"], 2)
+
+                # =========================
+                # BUY SIGNAL
+                # =========================
+
+                paper_trades += 1
+
+                active_positions[token_name] = {
+                    "entry_price": entry_price,
+                    "current_price": entry_price,
+                    "liquidity": liquidity,
+                    "buy_time": datetime.now()
+                }
+
+                await app.bot.send_message(
+                    chat_id=CHAT_ID,
+                    text=f"""
 🟢 BUY SIGNAL
 
 Token: {token_name}
@@ -209,49 +266,86 @@ Entry: {entry_price}
 
 Liquidity: ${liquidity}
 
+24H Volume: ${volume}
+
 TP: +{TAKE_PROFIT}%
 SL: {STOP_LOSS}%
 """
-            )
+                )
 
-            # WAIT
+                # =========================
+                # TRACK PRICE
+                # =========================
 
-            await asyncio.sleep(10)
+                await asyncio.sleep(15)
 
-            # RANDOM PNL
+                updated_tokens = fetch_tokens()
 
-            pnl_percent = round(random.uniform(-35, 120), 2)
+                current_price = entry_price
 
-            active_positions[token_name]["current_price"] = round(
-                entry_price * (1 + pnl_percent / 100),
-                8
-            )
+                for updated in updated_tokens:
 
-            # SELL
+                    if updated["token"] == token_name:
 
-            if pnl_percent > 0:
-                wins += 1
-                consecutive_losses = 0
-                result = "WIN"
-                emoji = "✅"
+                        current_price = updated["price"]
 
-            else:
-                losses += 1
-                consecutive_losses += 1
-                result = "LOSS"
-                emoji = "❌"
+                        break
 
-            pnl_total += pnl_percent
+                active_positions[token_name]["current_price"] = current_price
 
-            trade_history.append({
-                "token": token_name,
-                "pnl": pnl_percent,
-                "result": result
-            })
+                pnl_percent = (
+                    (current_price - entry_price)
+                    / entry_price
+                ) * 100
 
-            await app.bot.send_message(
-                chat_id=CHAT_ID,
-                text=f"""
+                pnl_percent = round(pnl_percent, 2)
+
+                # =========================
+                # TP / SL
+                # =========================
+
+                should_sell = False
+
+                if pnl_percent >= TAKE_PROFIT:
+                    should_sell = True
+
+                if pnl_percent <= STOP_LOSS:
+                    should_sell = True
+
+                if should_sell:
+
+                    if pnl_percent > 0:
+
+                        wins += 1
+                        consecutive_losses = 0
+
+                        result = "WIN"
+                        emoji = "✅"
+
+                    else:
+
+                        losses += 1
+                        consecutive_losses += 1
+
+                        result = "LOSS"
+                        emoji = "❌"
+
+                    pnl_total += pnl_percent
+
+                    trade_history.append({
+                        "token": token_name,
+                        "pnl": pnl_percent,
+                        "result": result
+                    })
+
+                    held_time = (
+                        datetime.now()
+                        - active_positions[token_name]["buy_time"]
+                    )
+
+                    await app.bot.send_message(
+                        chat_id=CHAT_ID,
+                        text=f"""
 {emoji} SELL SIGNAL
 
 Token: {token_name}
@@ -259,48 +353,45 @@ Token: {token_name}
 PnL: {pnl_percent}%
 
 Result: {result}
+
+Held: {held_time}
 """
-            )
+                    )
 
-            # REMOVE POSITION
+                    del active_positions[token_name]
 
-            if token_name in active_positions:
-                del active_positions[token_name]
+                    # =========================
+                    # AUTO PAUSE
+                    # =========================
 
-            # AUTO PAUSE
+                    if consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
 
-            if consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
+                        paused = True
 
-                paused = True
-
-                await app.bot.send_message(
-                    chat_id=CHAT_ID,
-                    text="""
+                        await app.bot.send_message(
+                            chat_id=CHAT_ID,
+                            text="""
 ⛔ BOT AUTO-PAUSED
 
 Too many consecutive losses.
 """
-                )
+                        )
 
-            # WAIT NEXT TRADE
-
-            await asyncio.sleep(20)
+            await asyncio.sleep(CHECK_INTERVAL)
 
         except Exception as e:
 
-            print("ERROR:", e)
+            print("LOOP ERROR:", e)
 
             await asyncio.sleep(10)
 
-# =========================
+# ====================================
 # MAIN
-# =========================
+# ====================================
 
 async def main():
 
     app = Application.builder().token(BOT_TOKEN).build()
-
-    # COMMANDS
 
     app.add_handler(CommandHandler("status", status))
     app.add_handler(CommandHandler("positions", positions))
@@ -308,17 +399,15 @@ async def main():
     app.add_handler(CommandHandler("pause", pause))
     app.add_handler(CommandHandler("resume", resume))
 
-    # START LOOP
-
     asyncio.create_task(trading_loop(app))
 
     print("BOT RUNNING...")
 
     await app.run_polling()
 
-# =========================
+# ====================================
 # START
-# =========================
+# ====================================
 
 if __name__ == "__main__":
     asyncio.run(main())
