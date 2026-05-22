@@ -415,9 +415,14 @@ Too many consecutive losses.
 # POST INIT
 # ====================================
 
-async def post_init(application: Application):
+def start_trading():
 
-    application.create_task(trading_loop(application))
+    trading_thread = threading.Thread(
+        target=trading_loop,
+        daemon=True
+    )
+
+    trading_thread.start()
 
 # ====================================
 # START
@@ -428,8 +433,50 @@ if __name__ == "__main__":
     app = (
         Application.builder()
         .token(BOT_TOKEN)
-        .post_init(post_init)
         .build()
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "status",
+            status_command
+        )
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "positions",
+            positions_command
+        )
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "history",
+            history_command
+        )
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "pause",
+            pause_command
+        )
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "resume",
+            resume_command
+        )
+    )
+
+    start_trading()
+
+    print("BOT RUNNING...")
+
+    app.run_polling(
+        drop_pending_updates=True
     )
 
     app.add_handler(CommandHandler("status", status))
@@ -437,7 +484,7 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("history", history))
     app.add_handler(CommandHandler("pause", pause))
     app.add_handler(CommandHandler("resume", resume))
-
+    start_trading()
     print("BOT RUNNING...")
 
     app.run_polling()
