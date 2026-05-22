@@ -8,25 +8,25 @@ import requests
 from datetime import datetime, timedelta
 from telegram import Bot
 
-# =========================================
+# =========================================================
 # TELEGRAM
-# =========================================
+# =========================================================
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 
-# =========================================
-# HYBRID SETTINGS
-# =========================================
+# =========================================================
+# ADAPTIVE AI SETTINGS
+# =========================================================
 
-TP1 = 1.18
-TP2 = 1.45
+TP1 = 1.15
+TP2 = 1.40
 
-STOP_LOSS = 0.90
+STOP_LOSS = 0.92
 
-TRAILING_TRIGGER = 1.25
+TRAILING_TRIGGER = 1.30
 TRAILING_STOP = 0.20
 
 MIN_LIQUIDITY = 40000
@@ -39,9 +39,9 @@ MAX_DAILY_LOSS = -15
 
 SCAN_INTERVAL = 45
 
-# =========================================
+# =========================================================
 # STATS
-# =========================================
+# =========================================================
 
 TOTAL_PNL = 0
 TOTAL_TRADES = 0
@@ -60,9 +60,16 @@ ACTIVE_TRADES = {}
 
 WATCHLIST = {}
 
-# =========================================
+TRADE_MEMORY = {
+    "wins": [],
+    "losses": []
+}
+
+MARKET_MODE = "SAFE"
+
+# =========================================================
 # TELEGRAM
-# =========================================
+# =========================================================
 
 def send_telegram(msg):
 
@@ -84,9 +91,9 @@ def send_telegram(msg):
 
         asyncio.run(send())
 
-# =========================================
-# TOKEN SCAN
-# =========================================
+# =========================================================
+# TOKEN SCANNER
+# =========================================================
 
 def get_tokens():
 
@@ -102,7 +109,7 @@ def get_tokens():
 
         tokens = []
 
-        for pair in pairs[:40]:
+        for pair in pairs[:50]:
 
             try:
 
@@ -124,21 +131,39 @@ def get_tokens():
                         pair.get("volume", {}).get("h24", 0)
                     ),
 
-                    "holders": random.randint(300, 6000),
+                    "holders": random.randint(300, 10000),
 
-                    "age_minutes": random.randint(5, 120),
+                    "holder_growth": random.randint(0, 500),
+
+                    "age_minutes": random.randint(5, 180),
 
                     "price_change": random.uniform(
-                        -10, 200
+                        -15, 300
                     ),
 
-                    "buys": random.randint(50, 1200),
+                    "buys": random.randint(50, 2000),
 
-                    "sells": random.randint(10, 400),
+                    "sells": random.randint(10, 600),
 
-                    "dev_wallet": random.uniform(0, 20),
+                    "unique_wallets": random.randint(
+                        50, 1500
+                    ),
 
-                    "fake_volume": random.randint(0, 100)
+                    "wallet_diversity": random.randint(
+                        50, 100
+                    ),
+
+                    "smart_money": random.randint(
+                        0, 100
+                    ),
+
+                    "fake_volume": random.randint(
+                        0, 100
+                    ),
+
+                    "dev_wallet": random.uniform(
+                        0, 20
+                    )
 
                 }
 
@@ -155,46 +180,121 @@ def get_tokens():
 
         return []
 
-# =========================================
+# =========================================================
+# MARKET MODE
+# =========================================================
+
+def update_market_mode(tokens):
+
+    global MARKET_MODE
+
+    hot_tokens = 0
+
+    for token in tokens:
+
+        if token["price_change"] > 50:
+            hot_tokens += 1
+
+    if hot_tokens >= 10:
+
+        MARKET_MODE = "RISK_ON"
+
+    else:
+
+        MARKET_MODE = "SAFE"
+
+# =========================================================
 # AI SCORE
-# =========================================
+# =========================================================
 
 def calculate_score(token):
 
     score = 0
 
+    # liquidity
+
     if token["liquidity"] > 40000:
-        score += 15
+        score += 10
 
     if token["liquidity"] > 100000:
-        score += 15
+        score += 10
+
+    # volume
 
     if token["volume"] > 150000:
-        score += 20
+        score += 15
 
     if token["volume"] > 500000:
         score += 15
 
+    # momentum
+
     if token["price_change"] > 20:
         score += 15
 
-    if token["price_change"] > 60:
+    if token["price_change"] > 80:
         score += 10
+
+    # buy pressure
 
     if token["buys"] > token["sells"] * 2:
         score += 15
 
+    # holders
+
     if token["holders"] > 500:
         score += 10
+
+    # holder velocity
+
+    if token["holder_growth"] > 100:
+        score += 10
+
+    if token["holder_growth"] > 300:
+        score += 10
+
+    # smart money
+
+    if token["smart_money"] > 70:
+        score += 15
+
+    # wallet diversity
+
+    if token["wallet_diversity"] > 70:
+        score += 10
+
+    # early launch
 
     if token["age_minutes"] < 45:
         score += 10
 
     return min(score, 100)
 
-# =========================================
+# =========================================================
+# AI CONFIDENCE
+# =========================================================
+
+def calculate_confidence(token):
+
+    confidence = 50
+
+    if token["holder_growth"] > 150:
+        confidence += 10
+
+    if token["smart_money"] > 80:
+        confidence += 15
+
+    if token["wallet_diversity"] > 80:
+        confidence += 10
+
+    if token["buys"] > token["sells"] * 3:
+        confidence += 15
+
+    return min(confidence, 100)
+
+# =========================================================
 # FILTER
-# =========================================
+# =========================================================
 
 def is_safe(token):
 
@@ -213,11 +313,28 @@ def is_safe(token):
     if token["fake_volume"] > 75:
         return False
 
+    if token["wallet_diversity"] < 60:
+        return False
+
     return True
 
-# =========================================
+# =========================================================
+# POSITION SIZE
+# =========================================================
+
+def get_position_size(score):
+
+    if score >= 97:
+        return "HIGH"
+
+    if score >= 93:
+        return "MEDIUM"
+
+    return "SMALL"
+
+# =========================================================
 # TRADE
-# =========================================
+# =========================================================
 
 def simulate_trade(token):
 
@@ -250,20 +367,36 @@ def simulate_trade(token):
 
     ACTIVE_TRADES[symbol] = True
 
+    position_size = get_position_size(
+        token["score"]
+    )
+
     send_telegram(
 f"""
-🚀 HYBRID ENTRY
+🚀 ADAPTIVE ENTRY
 
 {symbol}
 
 AI Score:
 {token['score']}/100
 
+Confidence:
+{token['confidence']}%
+
+Market Mode:
+{MARKET_MODE}
+
+Position Size:
+{position_size}
+
 Liquidity:
 ${token['liquidity']:.0f}
 
 Volume:
 ${token['volume']:.0f}
+
+Holder Growth:
+{token['holder_growth']}
 
 BUY:
 ${buy_price:.8f}
@@ -277,15 +410,30 @@ ${buy_price:.8f}
     tp1_hit = False
     tp2_hit = False
 
-    for i in range(45):
+    for i in range(60):
 
         time.sleep(2)
 
-        movement = random.uniform(0.95, 1.12)
+        if MARKET_MODE == "RISK_ON":
+
+            movement = random.uniform(
+                0.96, 1.18
+            )
+
+        else:
+
+            movement = random.uniform(
+                0.97, 1.10
+            )
 
         current_price *= movement
 
-        pnl = ((current_price / buy_price) - 1) * 100
+        pnl = (
+            (
+                current_price
+                / buy_price
+            ) - 1
+        ) * 100
 
         if current_price > highest_price:
             highest_price = current_price
@@ -307,6 +455,10 @@ ${buy_price:.8f}
 
             LOSS_STREAK += 1
 
+            TRADE_MEMORY["losses"].append(
+                token["score"]
+            )
+
             send_telegram(
 f"""
 🛑 STOP LOSS
@@ -315,6 +467,9 @@ f"""
 
 PnL:
 {pnl:.2f}%
+
+Loss Streak:
+{LOSS_STREAK}
 """
             )
 
@@ -359,7 +514,7 @@ f"""
 Sold 50%
 
 PnL:
-+18%
++15%
 """
             )
 
@@ -380,7 +535,7 @@ f"""
 
 Sold 30%
 
-Moonbag Left:
+Moonbag:
 20%
 """
             )
@@ -411,6 +566,10 @@ Moonbag Left:
 
                 LOSS_STREAK = 0
 
+                TRADE_MEMORY["wins"].append(
+                    token["score"]
+                )
+
                 send_telegram(
 f"""
 🌕 MOON EXIT
@@ -431,18 +590,18 @@ Highest Gain:
 
     ACTIVE_TRADES.pop(symbol, None)
 
-# =========================================
+# =========================================================
 # MAIN
-# =========================================
+# =========================================================
 
 def main():
 
     send_telegram(
 """
-🤖 HYBRID STABLE MOON BOT STARTED
+🤖 ADAPTIVE AI QUANT STARTED
 
 Mode:
-SAFE + MOON
+SAFE + MOON + AI
 """
     )
 
@@ -497,11 +656,21 @@ Bot resumed.
 
             tokens = get_tokens()
 
-            print(f"Found {len(tokens)}")
+            update_market_mode(tokens)
+
+            print(
+                f"Market Mode: {MARKET_MODE}"
+            )
 
             for token in tokens:
 
-                token["score"] = calculate_score(token)
+                token["score"] = calculate_score(
+                    token
+                )
+
+                token["confidence"] = (
+                    calculate_confidence(token)
+                )
 
                 if not is_safe(token):
                     continue
@@ -518,21 +687,35 @@ Bot resumed.
 
                 WATCHLIST[symbol] += 1
 
-                # ultra high quality only
+                # adaptive score
+
+                required_score = 90
+
+                if MARKET_MODE == "RISK_ON":
+                    required_score = 85
+
+                # elite entry only
 
                 if (
                     WATCHLIST[symbol] >= 2
-                    and token["score"] >= 90
+                    and token["score"] >= required_score
+                    and token["confidence"] >= 75
                 ):
 
                     send_telegram(
 f"""
-🔥 ELITE SIGNAL
+🔥 ELITE AI SIGNAL
 
 {symbol}
 
 AI Score:
 {token['score']}
+
+Confidence:
+{token['confidence']}%
+
+Market:
+{MARKET_MODE}
 """
                     )
 
@@ -546,9 +729,9 @@ AI Score:
 
             time.sleep(10)
 
-# =========================================
+# =========================================================
 # START
-# =========================================
+# =========================================================
 
 if __name__ == "__main__":
     main()
