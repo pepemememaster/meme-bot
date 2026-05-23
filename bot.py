@@ -108,7 +108,7 @@ Current: {data['current_price']}
 
 PnL: {pnl:.2f}%
 
-Liquidity: ${data['liquidity']}
+Liquidity: ${data.get('liquidity', 0)}
 """
 
     await update.message.reply_text(text)
@@ -187,9 +187,10 @@ def fetch_tokens():
 
                 valid_tokens.append({
                     "token": token_name,
-                    "price": 0.0001
+                    "price": 0.0001,
+                    "liquidity": 1000,
+                    "volume": 5000
                 })
- 
                 continue
                 # 排除大型幣
                 if token_name in [
