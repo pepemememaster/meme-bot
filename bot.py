@@ -28,7 +28,7 @@ MIN_VOLUME_24H = 1000
 MIN_BUYS = 2
 MAX_SELL_RATIO = 1.5
 
-CHECK_INTERVAL = 30
+CHECK_INTERVAL = 60
 
 MAX_CONSECUTIVE_LOSSES = 5
 
@@ -183,17 +183,64 @@ def fetch_tokens():
             
             try:
 
-                token_name = pair.get("url", "UNKNOWN")
+                token_name = pair.get("tokenAddress", "UNKNOWN")
 
-                valid_tokens.append({
-                    "token": token_name,   
-                    "price": 0.0001,
-                    "liquidity": 1000,
-                    "volume": 5000,
-                    "buys": 10,
-                    "sells": 2
-                })
-                continue
+try:
+
+    pair_url = f"https://api.dexscreener.com/latest/dex/tokens/{token_name}"
+
+    pair_response = requests.get(pair_url, timeout=10)
+
+    pair_data = pair_response.json()
+
+    dex_pairs = pair_data.get("pairs", [])
+
+    if not dex_pairs:
+        continue
+
+    best_pair = dex_pairs[0]
+
+    price = float(best_pair.get("priceUsd", 0))
+
+    liquidity = float(
+        best_pair.get("liquidity", {}).get("usd", 0)
+    )
+
+    volume = float(
+        best_pair.get("volume", {}).get("h24", 0)
+    )
+
+    buys = int(
+        best_pair.get("txns", {}).get("h24", {}).get("buys", 0)
+    )
+
+    sells = int(
+        best_pair.get("txns", {}).get("h24", {}).get("sells", 0)
+    )
+
+    if liquidity < MIN_LIQUIDITY:
+        continue
+
+    if volume < MIN_VOLUME_24H:
+        continue
+
+    if buys < MIN_BUYS:
+        continue
+
+    valid_tokens.append({
+        "token": token_name,
+        "price": price,
+        "liquidity": liquidity,
+        "volume": volume,
+        "buys": buys,
+        "sells": sells
+    })
+
+except Exception as e:
+
+    print(f"PAIR ERROR: {e}")
+
+    continue
                 # 排除大型幣
                 if token_name in [
                     "SOL",
