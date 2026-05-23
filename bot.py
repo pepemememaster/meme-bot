@@ -183,62 +183,61 @@ def fetch_tokens():
             
             try:
                 token_name = pair.get("tokenAddress", "UNKNOWN")
+                
+                pair_url = f"https://api.dexscreener.com/latest/dex/tokens/{token_name}"
 
+                pair_response = requests.get(pair_url, timeout=10)
 
-    pair_url = f"https://api.dexscreener.com/latest/dex/tokens/{token_name}"
+                pair_data = pair_response.json()
 
-    pair_response = requests.get(pair_url, timeout=10)
+                dex_pairs = pair_data.get("pairs", [])
 
-    pair_data = pair_response.json()
+                if not dex_pairs:
+                    continue
 
-    dex_pairs = pair_data.get("pairs", [])
+                best_pair = dex_pairs[0]
 
-    if not dex_pairs:
-        continue
+                price = float(best_pair.get("priceUsd", 0))
 
-    best_pair = dex_pairs[0]
+                liquidity = float(
+                best_pair.get("liquidity", {}).get("usd", 0)
+                )
 
-    price = float(best_pair.get("priceUsd", 0))
+                volume = float(
+                best_pair.get("volume", {}).get("h24", 0)
+                )
 
-    liquidity = float(
-        best_pair.get("liquidity", {}).get("usd", 0)
-    )
+                buys = int(
+                best_pair.get("txns", {}).get("h24", {}).get("buys", 0)
+                )
 
-    volume = float(
-        best_pair.get("volume", {}).get("h24", 0)
-    )
+                sells = int(
+                best_pair.get("txns", {}).get("h24", {}).get("sells", 0)
+                )
 
-    buys = int(
-        best_pair.get("txns", {}).get("h24", {}).get("buys", 0)
-    )
+            if liquidity < MIN_LIQUIDITY:
+            continue
 
-    sells = int(
-        best_pair.get("txns", {}).get("h24", {}).get("sells", 0)
-    )
+            if volume < MIN_VOLUME_24H:
+            continue
 
-    if liquidity < MIN_LIQUIDITY:
-        continue
+            if buys < MIN_BUYS:
+            continue
 
-    if volume < MIN_VOLUME_24H:
-        continue
+                valid_tokens.append({
+                "token": token_name,   
+                "price": price,
+                "liquidity": liquidity,
+                "volume": volume,
+                "buys": buys,
+                "sells": sells
+                })
 
-    if buys < MIN_BUYS:
-        continue
+            except Exception as e:
 
-    valid_tokens.append({
-        "token": token_name,
-        "price": price,
-        "liquidity": liquidity,
-        "volume": volume,
-        "buys": buys,
-        "sells": sells
-    })
+                print(f"PAIR ERROR: {e}")
 
-     except Exception as e:
-
-    print(f"PAIR ERROR: {e}")
-
-    continue
+                continue
                 # 排除大型幣
                 if token_name in [
                     "SOL",
