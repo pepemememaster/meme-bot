@@ -21,15 +21,15 @@ CHAT_ID = "5034825126"
 TAKE_PROFIT = 60
 STOP_LOSS = -20
 
-MIN_LIQUIDITY = 5000
-MAX_LIQUIDITY = 150000
+MIN_LIQUIDITY = 3000
+MAX_LIQUIDITY = 200000
 
-MIN_VOLUME_24H = 10000
+MIN_VOLUME_24H = 5000
 
-MIN_BUYS = 20
-MAX_SELL_RATIO = 0.8
+MIN_BUYS = 10
+MAX_SELL_RATIO = 1.1
 
-CHECK_INTERVAL = 30
+CHECK_INTERVAL = 20
 
 MAX_CONSECUTIVE_LOSSES = 5
 
@@ -318,7 +318,7 @@ async def trading_loop(app):
 
                 continue
 
-            for token_data in tokens[:5]:
+            for token_data in tokens[:15]:
 
                 token_name = token_data["token"]
 
