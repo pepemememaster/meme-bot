@@ -165,21 +165,25 @@ def fetch_tokens():
 
     try:
 
-        url = "https://api.dexscreener.com/latest/dex/search/?q=SOL"
+        url = "https://api.dexscreener.com/token-profiles/latest/v1"
 
         response = requests.get(url, timeout=10)
 
         data = response.json()
 
-        pairs = data.get("pairs", [])
+        print(data)
+        
+        pairs = data if isinstance(data, list) else []
 
         valid_tokens = []
 
         for pair in pairs:
-
+            
+            print(pair)
+            
             try:
 
-                token_name = pair["baseToken"]["symbol"]
+                token_name = pair.get("url", "UNKNOWN")
 
                 # 排除大型幣
                 if token_name in [
