@@ -215,14 +215,14 @@ def fetch_tokens():
                 best_pair.get("txns", {}).get("h24", {}).get("sells", 0)
                 )
 
-            if liquidity < MIN_LIQUIDITY:
-            continue
+                if liquidity < MIN_LIQUIDITY:
+                continue
 
-            if volume < MIN_VOLUME_24H:
-            continue
+                if volume < MIN_VOLUME_24H:
+                continue
 
-            if buys < MIN_BUYS:
-            continue
+                if buys < MIN_BUYS:
+                continue
 
                 valid_tokens.append({
                 "token": token_name,   
@@ -233,11 +233,11 @@ def fetch_tokens():
                 "sells": sells
                 })
 
-            except Exception as e:
+                except Exception as e:
 
-                print(f"PAIR ERROR: {e}")
+                    print(f"PAIR ERROR: {e}")
 
-                continue
+                    continue
                 # 排除大型幣
                 if token_name in [
                     "SOL",
