@@ -144,7 +144,7 @@ def fetch_tokens():
 
                 token_address = pair.get("tokenAddress")
                 if pair.get("chainId") != "solana":
-                continue
+                    continue
                 if not token_address:
                     continue
 
