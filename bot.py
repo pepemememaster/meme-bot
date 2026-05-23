@@ -197,14 +197,15 @@ def fetch_tokens():
                     continue
 
                 valid_tokens.append({
-                    "token": token_address,
-                    "price": price,
-                    "liquidity": liquidity,
-                    "volume": volume,
-                    "buys": buys,
-                    "sells": sells,
+                     "token": token_address,
+                     "name": pair["baseToken"]["name"],
+                     "symbol": pair["baseToken"]["symbol"],
+                     "price": price,
+                     "liquidity": liquidity,
+                     "volume": volume, 
+                     "buys": buys,
+                     "sells": sells,
                 })
-
             except Exception as e:
 
                 print(f"PAIR ERROR: {e}")
@@ -296,7 +297,7 @@ async def trading_loop(app):
 
             for token_data in tokens[:5]:
 
-                token_name = token_data["token"]
+                token_name = f"{token_data['name']} (${token_data['symbol']})"
 
                 if token_name in active_positions:
                     continue
