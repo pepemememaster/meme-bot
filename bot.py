@@ -181,11 +181,9 @@ def fetch_tokens():
             
             print(pair)
             
-            try:
-
+    try:
                 token_name = pair.get("tokenAddress", "UNKNOWN")
 
-try:
 
     pair_url = f"https://api.dexscreener.com/latest/dex/tokens/{token_name}"
 
@@ -236,7 +234,7 @@ try:
         "sells": sells
     })
 
-except Exception as e:
+     except Exception as e:
 
     print(f"PAIR ERROR: {e}")
 
