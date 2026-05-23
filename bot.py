@@ -185,6 +185,12 @@ def fetch_tokens():
 
                 token_name = pair.get("url", "UNKNOWN")
 
+                valid_tokens.append({
+                    "token": token_name,
+                    "price": 0.0001
+                })
+ 
+                continue
                 # 排除大型幣
                 if token_name in [
                     "SOL",
