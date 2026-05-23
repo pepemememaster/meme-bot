@@ -1,4 +1,4 @@
-壓import asyncio
+import asyncio
 import random
 import requests
 from telegram import Update
