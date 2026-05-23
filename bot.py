@@ -186,10 +186,12 @@ def fetch_tokens():
                 token_name = pair.get("url", "UNKNOWN")
 
                 valid_tokens.append({
-                    "token": token_name,
+                    "token": token_name,   
                     "price": 0.0001,
                     "liquidity": 1000,
-                    "volume": 5000
+                    "volume": 5000,
+                    "buys": 10,
+                    "sells": 2
                 })
                 continue
                 # 排除大型幣
