@@ -20,8 +20,8 @@ TAKE_PROFIT = 60
 STOP_LOSS = -20
 
 # 放寬一點的條件
-MIN_LIQUIDITY = 5000
-MAX_LIQUIDITY = 150000
+MIN_LIQUIDITY = 500
+MAX_LIQUIDITY = 15000
 
 MIN_VOLUME_24H = 1000
 
@@ -259,7 +259,10 @@ async def trading_loop(app):
                 continue
 
             tokens = fetch_tokens()
-
+            
+            print(tokens)
+            print(f"FOUND {len(tokens)} TOKENS FROM API")
+            
             if not tokens:
 
                 print("NO TOKENS FOUND")
