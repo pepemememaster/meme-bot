@@ -17,18 +17,18 @@ from datetime import datetime
 BOT_TOKEN = "8831478002:AAFSDWIKXlySdPWwSdBtKufJasVq9--RON8"
 CHAT_ID = "5034825126"
 
-TAKE_PROFIT = 40
+TAKE_PROFIT = 35
 STOP_LOSS = -15
 
-MIN_LIQUIDITY = 2000
-MAX_LIQUIDITY = 80000
+MIN_LIQUIDITY = 1500
+MAX_LIQUIDITY = 100000
 
-MIN_VOLUME_24H = 3000
+MIN_VOLUME_24H = 2000
 
-MIN_BUYS = 5
-MAX_SELL_RATIO = 1.2
+MIN_BUYS = 4
+MAX_SELL_RATIO = 1.5
 
-CHECK_INTERVAL = 20
+CHECK_INTERVAL = 15
 
 MAX_CONSECUTIVE_LOSSES = 5
 
@@ -275,7 +275,7 @@ async def trading_loop(app):
                 await asyncio.sleep(10)
                 continue
 
-            for token_data in tokens[:10]:
+            for token_data in tokens[:15]:
 
                 token_name = token_data["token"]
 
