@@ -454,6 +454,7 @@ async def main():
     app.add_handler(CommandHandler("stats", stats))
     app.add_handler(CommandHandler("positions", positions))
     app.add_handler(CommandHandler("history", history))
+    app.add_handler(CommandHandler("status", status))
 
     asyncio.create_task(trading_loop(app))
 
