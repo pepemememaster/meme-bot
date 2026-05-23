@@ -196,16 +196,16 @@ def fetch_tokens():
                 if sell_ratio > MAX_SELL_RATIO:
                     continue
 
-                valid_tokens.append({
-                     "token": token_address,
-                     "name": pair["baseToken"]["name"],
-                     "symbol": pair["baseToken"]["symbol"],
-                     "price": price,
-                     "liquidity": liquidity,
-                     "volume": volume, 
-                     "buys": buys,
-                     "sells": sells,
-                })
+                   valid_tokens.append({
+                        "token": token_address,
+                        "name": pair.get("baseToken", {}).get("name", "Unknown"),
+                        "symbol": pair.get("baseToken", {}).get("symbol", "???"),
+                        "price": price,
+                        "liquidity": liquidity,
+                        "volume": volume,
+                        "buys": buys,
+                        "sells": sells,
+                   })
             except Exception as e:
 
                 print(f"PAIR ERROR: {e}")
