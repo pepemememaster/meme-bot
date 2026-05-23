@@ -1,4 +1,4 @@
-import asyncio
+壓import asyncio
 import random
 import requests
 from telegram import Update
@@ -443,10 +443,17 @@ PnL:
 # =========================================
 # MAIN
 # =========================================
+async def post_init(application):
+    asyncio.create_task(trading_loop(application))
 
-async def main():
+def main():
 
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app = (
+        ApplicationBuilder()
+        .token(BOT_TOKEN)
+        .post_init(post_init)
+        .build()
+    )
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("pause", pause))
@@ -455,14 +462,9 @@ async def main():
     app.add_handler(CommandHandler("positions", positions))
     app.add_handler(CommandHandler("history", history))
 
-    asyncio.create_task(trading_loop(app))
-
     print("BOT STARTED")
 
-    await app.run_polling(
-        drop_pending_updates=True
-    )
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
-
-    asyncio.run(main())
+    main()
