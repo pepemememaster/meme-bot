@@ -7,7 +7,6 @@ from telegram.ext import (
 
 import asyncio
 import requests
-import threading
 from datetime import datetime
 
 # ====================================
@@ -17,18 +16,19 @@ from datetime import datetime
 BOT_TOKEN = "8831478002:AAFSDWIKXlySdPWwSdBtKufJasVq9--RON8"
 CHAT_ID = "5034825126"
 
-TAKE_PROFIT = 35
-STOP_LOSS = -15
+TAKE_PROFIT = 60
+STOP_LOSS = -20
 
-MIN_LIQUIDITY = 1500
-MAX_LIQUIDITY = 100000
+# 放寬一點的條件
+MIN_LIQUIDITY = 5000
+MAX_LIQUIDITY = 150000
 
-MIN_VOLUME_24H = 2000
+MIN_VOLUME_24H = 3000
 
-MIN_BUYS = 4
-MAX_SELL_RATIO = 1.5
+MIN_BUYS = 5
+MAX_SELL_RATIO = 1.2
 
-CHECK_INTERVAL = 15
+CHECK_INTERVAL = 30
 
 MAX_CONSECUTIVE_LOSSES = 5
 
@@ -167,19 +167,7 @@ def fetch_tokens():
 
         url = "https://api.dexscreener.com/latest/dex/search/?q=SOL"
 
-        response = requests.get(
-            url,
-            timeout=10,
-            headers={
-                "User-Agent": "Mozilla/5.0"
-            }
-        )
-
-        if response.status_code != 200:
-            return []
-
-        if not response.text:
-            return []
+        response = requests.get(url, timeout=10)
 
         data = response.json()
 
@@ -193,6 +181,7 @@ def fetch_tokens():
 
                 token_name = pair["baseToken"]["symbol"]
 
+                # 排除大型幣
                 if token_name in [
                     "SOL",
                     "USDC",
@@ -217,6 +206,7 @@ def fetch_tokens():
                 else:
                     sell_ratio = sells / max(buys, 1)
 
+                # 條件過濾
                 if (
                     liquidity >= MIN_LIQUIDITY
                     and liquidity <= MAX_LIQUIDITY
@@ -272,10 +262,12 @@ async def trading_loop(app):
 
             if not tokens:
 
-                await asyncio.sleep(10)
+                print("NO TOKENS FOUND")
+
+                await asyncio.sleep(20)
                 continue
 
-            for token_data in tokens[:15]:
+            for token_data in tokens[:5]:
 
                 token_name = token_data["token"]
 
@@ -325,7 +317,7 @@ SL: {STOP_LOSS}%
 """
                 )
 
-                await asyncio.sleep(15)
+                await asyncio.sleep(20)
 
                 updated_tokens = fetch_tokens()
 
@@ -425,24 +417,15 @@ Too many consecutive losses.
             await asyncio.sleep(10)
 
 # ====================================
-# START TRADING
+# POST INIT
 # ====================================
 
-def start_trading(app):
+async def post_init(application: Application):
 
-    def run_loop():
-
-        asyncio.run(trading_loop(app))
-
-    thread = threading.Thread(
-        target=run_loop,
-        daemon=True
-    )
-
-    thread.start()
+    application.create_task(trading_loop(application))
 
 # ====================================
-# MAIN
+# START
 # ====================================
 
 if __name__ == "__main__":
@@ -450,6 +433,7 @@ if __name__ == "__main__":
     app = (
         Application.builder()
         .token(BOT_TOKEN)
+        .post_init(post_init)
         .build()
     )
 
@@ -459,11 +443,6 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("pause", pause))
     app.add_handler(CommandHandler("resume", resume))
 
-    print("🚀 BOT RUNNING...")
+    print("BOT RUNNING...")
 
-    start_trading(app)
-
-    app.run_polling(
-        drop_pending_updates=True,
-        close_loop=False
-    )
+    app.run_polling()
