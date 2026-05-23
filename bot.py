@@ -15,7 +15,7 @@ from datetime import datetime
 # CONFIG
 # ====================================
 
-BOT_TOKEN = "8831478002:AAFAWyfbleib_jMYF6sC4m1sFkD9uFYTif8"
+BOT_TOKEN = "8831478002:AAFSDWIKXlySdPWwSdBtKufJasVq9--RON8"
 CHAT_ID = "5034825126"
 
 TAKE_PROFIT = 60
