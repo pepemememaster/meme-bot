@@ -14,25 +14,28 @@ from telegram.ext import (
 # CONFIG
 # =========================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
 CHECK_INTERVAL = 45
 PAPER_TRADE_AMOUNT = 100
 # =========================
-# EARLY MOMENTUM FILTERS
+# UPGRADED EARLY MOMENTUM FILTERS
 # =========================
-# 抓早期低熱度真買盤
-MIN_LIQUIDITY = 2500
-MAX_LIQUIDITY = 12000
-MIN_VOLUME_24H = 1200
-MAX_VOLUME_24H = 20000
-MIN_BUYS = 18
-MAX_BUYS = 250
-MAX_SELL_RATIO = 1.05
-MIN_BUY_SELL_DELTA = 12
-MIN_VOLUME_PER_BUY = 140
-MAX_TOKEN_AGE_MINUTES = 20
-MAX_VOLUME_LIQ_RATIO = 4
-MIN_MOMENTUM_SCORE = 120
-MAX_MOMENTUM_SCORE = 900
+MIN_LIQUIDITY = 1800
+MAX_LIQUIDITY = 18000
+MIN_VOLUME_24H = 700
+MAX_VOLUME_24H = 45000
+MIN_BUYS = 10
+MAX_BUYS = 350
+MAX_SELL_RATIO = 1.25
+MIN_BUY_SELL_DELTA = 5
+MIN_VOLUME_PER_BUY = 70
+MAX_TOKEN_AGE_MINUTES = 35
+MAX_VOLUME_LIQ_RATIO = 8
+MIN_MOMENTUM_SCORE = 80
+MAX_MOMENTUM_SCORE = 1200
+# NEW EARLY MOMENTUM FILTERS
+MIN_5M_VOLUME = 250
+MIN_5M_BUYS = 4
 # =========================
 # RISK MANAGEMENT
 # =========================
@@ -82,7 +85,9 @@ def calculate_momentum_score(
     sells,
     volume_24h,
     liquidity,
-    age_minutes
+    age_minutes,
+    volume_5m,
+    buys_5m
 ):
     try:
         if sells <= 0:
@@ -90,10 +95,12 @@ def calculate_momentum_score(
         buy_sell_strength = buys / sells
         volume_quality = volume_24h / liquidity
         score = (
-            (buys * 2.2)
-            + (buy_sell_strength * 120)
-            + (volume_quality * 80)
-            - (age_minutes * 4.5)
+            (buys * 1.8)
+            + (buy_sell_strength * 100)
+            + (volume_quality * 60)
+            + (volume_5m / 12)
+            + (buys_5m * 8)
+            - (age_minutes * 3)
         )
         return round(score, 2)
     except:
@@ -106,7 +113,7 @@ async def start(
     context: ContextTypes.DEFAULT_TYPE
 ):
     await update.message.reply_text(
-        "🚀 Solana Early Momentum Paper Trading Bot Online"
+        "🚀 Solana Alpha Momentum Bot Online"
     )
 async def help_command(
     update: Update,
@@ -237,6 +244,9 @@ async def analyze_token(token):
         volume_24h = float(
             pair.get("volume", {}).get("h24", 0)
         )
+        volume_5m = float(
+            pair.get("volume", {}).get("m5", 0)
+        )
         buys = int(
             pair.get("txns", {})
             .get("h24", {})
@@ -246,6 +256,11 @@ async def analyze_token(token):
             pair.get("txns", {})
             .get("h24", {})
             .get("sells", 0)
+        )
+        buys_5m = int(
+            pair.get("txns", {})
+            .get("m5", {})
+            .get("buys", 0)
         )
         price = float(pair.get("priceUsd", 0))
         pair_created_at = pair.get(
@@ -265,6 +280,10 @@ async def analyze_token(token):
         if volume_24h < MIN_VOLUME_24H:
             return None
         if volume_24h > MAX_VOLUME_24H:
+            return None
+        if volume_5m < MIN_5M_VOLUME:
+            return None
+        if buys_5m < MIN_5M_BUYS:
             return None
         if buys < MIN_BUYS:
             return None
@@ -292,7 +311,9 @@ async def analyze_token(token):
             sells,
             volume_24h,
             liquidity,
-            age_minutes
+            age_minutes,
+            volume_5m,
+            buys_5m
         )
         if momentum_score < MIN_MOMENTUM_SCORE:
             return None
@@ -311,7 +332,9 @@ async def analyze_token(token):
             "price": price,
             "liquidity": liquidity,
             "volume": volume_24h,
+            "volume_5m": volume_5m,
             "buys": buys,
+            "buys_5m": buys_5m,
             "sells": sells,
             "age": age_minutes,
             "score": momentum_score,
@@ -343,26 +366,29 @@ async def paper_buy(token_data, app):
     }
     last_trade_time = now
     msg = (
-        "🚀 PAPER BUY\n"
-        f"Token:\n"
+        "🚀 PAPER BUY\n\n"
         f"{token_data['name']} "
-        f"({token_data['symbol']})\n"
+        f"({token_data['symbol']})\n\n"
         f"Entry:\n"
-        f"${token_data['price']}\n"
+        f"${token_data['price']}\n\n"
         f"Liquidity:\n"
-        f"${token_data['liquidity']:.0f}\n"
-        f"Volume:\n"
-        f"${token_data['volume']:.0f}\n"
-        f"Buys/Sells:\n"
+        f"${token_data['liquidity']:.0f}\n\n"
+        f"24H Volume:\n"
+        f"${token_data['volume']:.0f}\n\n"
+        f"5M Volume:\n"
+        f"${token_data['volume_5m']:.0f}\n\n"
+        f"24H Buys/Sells:\n"
         f"{token_data['buys']} "
-        f"/ {token_data['sells']}\n"
+        f"/ {token_data['sells']}\n\n"
+        f"5M Buys:\n"
+        f"{token_data['buys_5m']}\n\n"
         f"Momentum Score:\n"
-        f"{token_data['score']}\n"
+        f"{token_data['score']}\n\n"
         f"Age:\n"
         f"{token_data['age']:.1f} minutes"
     )
     await app.bot.send_message(
-        chat_id=os.getenv("CHAT_ID"),
+        chat_id=CHAT_ID,
         text=msg
     )
 # =========================
@@ -401,17 +427,17 @@ async def paper_sell(
             + (PAUSE_DURATION_MINUTES * 60)
         )
         await app.bot.send_message(
-            chat_id=os.getenv("CHAT_ID"),
+            chat_id=CHAT_ID,
             text="⏸ AUTO PAUSE ACTIVATED"
         )
     msg = (
-        "❌ PAPER SELL\n"
-        f"{trade['symbol']}\n"
+        "❌ PAPER SELL\n\n"
+        f"{trade['symbol']}\n\n"
         f"Reason: {reason}\n"
         f"PnL: {pnl_percent:.2f}%"
     )
     await app.bot.send_message(
-        chat_id=os.getenv("CHAT_ID"),
+        chat_id=CHAT_ID,
         text=msg
     )
     del active_trades[token_address]
@@ -520,7 +546,15 @@ async def scanner_loop(app):
                 f"Valid candidates: "
                 f"{len(candidates)}"
             )
-            # 只取前2避免亂追
+            # HOT TOKEN LOGS
+            for token_data in candidates[:5]:
+                logger.info(
+                    f"HOT TOKEN | "
+                    f"{token_data['symbol']} | "
+                    f"Score {token_data['score']} | "
+                    f"5m Buys {token_data['buys_5m']}"
+                )
+            # TOP 2 ONLY
             for token_data in candidates[:2]:
                 await paper_buy(
                     token_data,
