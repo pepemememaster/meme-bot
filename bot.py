@@ -15,9 +15,8 @@ from telegram.ext import (
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 CHECK_INTERVAL = 45
-PAPER_TRADE_AMOUNT = 100
 # =========================
-# FULL UPGRADE SETTINGS
+# FULL ALPHA SETTINGS
 # =========================
 # EARLY ENTRY
 MIN_LIQUIDITY = 2200
@@ -40,8 +39,22 @@ MAX_VOLUME_LIQ_RATIO = 5
 # MOMENTUM
 MIN_MOMENTUM_SCORE = 120
 MAX_MOMENTUM_SCORE = 750
-# HOLDERS FILTER
+# HOLDERS
 MIN_HOLDERS = 80
+# SOCIAL / HYPE
+MIN_ACTIVE_BOOSTS = 50
+HOT_KEYWORDS = [
+    "ai",
+    "gpt",
+    "pepe",
+    "cat",
+    "dog",
+    "pump",
+    "moon",
+    "sol",
+    "meme",
+    "elon",
+]
 # REENTRY BLOCK
 REENTRY_BLOCK_MINUTES = 120
 # RISK
@@ -96,6 +109,8 @@ def calculate_momentum_score(
     volume_5m,
     buys_5m,
     buys_1m,
+    active_boosts,
+    keyword_bonus,
 ):
     try:
         if sells <= 0:
@@ -109,9 +124,23 @@ def calculate_momentum_score(
             + (volume_5m / 10)
             + (buys_5m * 10)
             + (buys_1m * 18)
+            + (active_boosts * 2)
+            + keyword_bonus
             - (age_minutes * 3)
         )
         return round(score, 2)
+    except:
+        return 0
+def keyword_score(name, symbol):
+    try:
+        text = (
+            f"{name} {symbol}"
+        ).lower()
+        bonus = 0
+        for keyword in HOT_KEYWORDS:
+            if keyword in text:
+                bonus += 25
+        return bonus
     except:
         return 0
 # =========================
@@ -122,7 +151,7 @@ async def start(
     context: ContextTypes.DEFAULT_TYPE
 ):
     await update.message.reply_text(
-        "🚀 Solana Alpha Momentum Bot Online"
+        "🚀 Solana Alpha Scanner Online"
     )
 async def help_command(
     update: Update,
@@ -196,7 +225,7 @@ async def resume(
         "▶️ Bot resumed"
     )
 # =========================
-# FETCH TOKENS
+# FETCH
 # =========================
 async def fetch_pairs():
     url = "https://api.dexscreener.com/token-profiles/latest/v1"
@@ -208,8 +237,7 @@ async def fetch_pairs():
             ) as response:
                 if response.status != 200:
                     return []
-                data = await response.json()
-                return data
+                return await response.json()
         except Exception as e:
             logger.error(f"Fetch error: {e}")
             return []
@@ -243,7 +271,7 @@ async def fetch_holder_count(token_address):
         try:
             async with session.get(
                 url,
-               timeout=20
+                timeout=20
             ) as response:
                 if response.status != 200:
                     return 0
@@ -257,7 +285,7 @@ async def fetch_holder_count(token_address):
         except:
             return 0
 # =========================
-# FILTER LOGIC
+# ANALYZE TOKEN
 # =========================
 async def analyze_token(token):
     try:
@@ -305,6 +333,22 @@ async def analyze_token(token):
             "pairCreatedAt",
             0
         )
+        active_boosts = (
+            pair.get("boosts", {})
+            .get("active", 0)
+        )
+        name = pair.get(
+            "baseToken",
+            {}
+        ).get("name", "Unknown")
+        symbol = pair.get(
+            "baseToken",
+            {}
+        ).get("symbol", "???")
+        keyword_bonus = keyword_score(
+            name,
+            symbol
+        )
         age_minutes = calculate_token_age_minutes(
             pair_created_at
         )
@@ -339,6 +383,8 @@ async def analyze_token(token):
         buy_dominance = buys / max(sells, 1)
         if buy_dominance < MIN_BUY_DOMINANCE:
             return None
+        if active_boosts < MIN_ACTIVE_BOOSTS:
+            return None
         buy_sell_delta = buys - sells
         if buy_sell_delta < MIN_BUY_SELL_DELTA:
             return None
@@ -363,6 +409,8 @@ async def analyze_token(token):
             volume_5m,
             buys_5m,
             buys_1m,
+            active_boosts,
+            keyword_bonus,
         )
         if momentum_score < MIN_MOMENTUM_SCORE:
             return None
@@ -370,14 +418,8 @@ async def analyze_token(token):
             return None
         return {
             "token_address": token_address,
-            "name": pair.get(
-                "baseToken",
-                {}
-            ).get("name", "Unknown"),
-            "symbol": pair.get(
-                "baseToken",
-                {}
-            ).get("symbol", "???"),
+            "name": name,
+            "symbol": symbol,
             "price": price,
             "liquidity": liquidity,
             "volume": volume_24h,
@@ -387,7 +429,9 @@ async def analyze_token(token):
             "buys_1m": buys_1m,
             "sells": sells,
             "holders": holders,
+            "active_boosts": active_boosts,
             "buy_dominance": buy_dominance,
+            "keyword_bonus": keyword_bonus,
             "age": age_minutes,
             "score": momentum_score,
         }
@@ -427,7 +471,6 @@ async def paper_buy(token_data, app):
     last_trade_time = now
     msg = (
         "🚀 PAPER BUY\n\n"
-        f"Token:\n"
         f"{token_data['name']} "
         f"({token_data['symbol']})\n\n"
         f"Entry:\n"
@@ -449,6 +492,10 @@ async def paper_buy(token_data, app):
         f"{token_data['buys_1m']}\n\n"
         f"5M Buys:\n"
         f"{token_data['buys_5m']}\n\n"
+        f"Active Boosts:\n"
+        f"{token_data['active_boosts']}\n\n"
+        f"Keyword Bonus:\n"
+        f"{token_data['keyword_bonus']}\n\n"
         f"Momentum Score:\n"
         f"{token_data['score']}\n\n"
         f"Age:\n"
@@ -624,6 +671,7 @@ async def scanner_loop(app):
                     f"1m {token_data['buys_1m']} | "
                     f"5m {token_data['buys_5m']} | "
                     f"Holders {token_data['holders']} | "
+                    f"Boosts {token_data['active_boosts']} | "
                     f"Dom {token_data['buy_dominance']:.2f}"
                 )
             for token_data in candidates[:2]:
