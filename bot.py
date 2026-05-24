@@ -10,87 +10,66 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
 )
-
 # =========================
 # CONFIG
 # =========================
-
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-
 CHECK_INTERVAL = 45
-
 PAPER_TRADE_AMOUNT = 100
-
 # =========================
-# ANTI-RUG FILTERS
+# EARLY MOMENTUM FILTERS
 # =========================
-
-MIN_LIQUIDITY = 8000
-MAX_LIQUIDITY = 40000
-
-MIN_VOLUME_24H = 15000
-MAX_VOLUME_LIQ_RATIO = 8
-
-MIN_BUYS = 25
-MAX_SELL_RATIO = 1.15
-MIN_BUY_SELL_DELTA = 80
-
-MAX_TOKEN_AGE_MINUTES = 45
-
+# 抓早期低熱度真買盤
+MIN_LIQUIDITY = 2500
+MAX_LIQUIDITY = 12000
+MIN_VOLUME_24H = 1200
+MAX_VOLUME_24H = 20000
+MIN_BUYS = 18
+MAX_BUYS = 250
+MAX_SELL_RATIO = 1.05
+MIN_BUY_SELL_DELTA = 12
+MIN_VOLUME_PER_BUY = 140
+MAX_TOKEN_AGE_MINUTES = 20
+MAX_VOLUME_LIQ_RATIO = 4
+MIN_MOMENTUM_SCORE = 120
+MAX_MOMENTUM_SCORE = 900
 # =========================
 # RISK MANAGEMENT
 # =========================
-
-TAKE_PROFIT = 0.40
-STOP_LOSS = 0.18
-
+TAKE_PROFIT = 0.25
+STOP_LOSS = 0.12
 TRAILING_STOP_ENABLED = True
-TRAILING_TRIGGER = 0.30
-TRAILING_GAP = 0.15
-
+TRAILING_TRIGGER = 0.15
+TRAILING_GAP = 0.10
 # =========================
 # BOT SETTINGS
 # =========================
-
 MAX_ACTIVE_TRADES = 2
-
 COOLDOWN_MINUTES = 20
-
-AUTO_PAUSE_AFTER_LOSSES = 4
+AUTO_PAUSE_AFTER_LOSSES = 3
 PAUSE_DURATION_MINUTES = 45
-
 # =========================
 # GLOBALS
 # =========================
-
 active_trades = {}
 trade_history = []
-
 total_pnl = 0
-
 wins = 0
 losses = 0
-
 consecutive_losses = 0
-
 paused_until = 0
 last_trade_time = 0
-
 # =========================
 # LOGGING
 # =========================
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
-
 logger = logging.getLogger(__name__)
-
 # =========================
 # HELPERS
 # =========================
-
 def calculate_token_age_minutes(pair_created_at):
     try:
         now_ms = int(time.time() * 1000)
@@ -98,8 +77,6 @@ def calculate_token_age_minutes(pair_created_at):
         return age_ms / 60000
     except:
         return 9999
-
-
 def calculate_momentum_score(
     buys,
     sells,
@@ -107,41 +84,49 @@ def calculate_momentum_score(
     liquidity,
     age_minutes
 ):
-    score = (
-        (buys * 1.8)
-        + (volume_24h / 120)
-        + (liquidity / 80)
-        - (sells * 1.3)
-        - (age_minutes * 2.2)
-    )
-
-    return round(score, 2)
-
-
+    try:
+        if sells <= 0:
+            sells = 1
+        buy_sell_strength = buys / sells
+        volume_quality = volume_24h / liquidity
+        score = (
+            (buys * 2.2)
+            + (buy_sell_strength * 120)
+            + (volume_quality * 80)
+            - (age_minutes * 4.5)
+        )
+        return round(score, 2)
+    except:
+        return 0
 # =========================
 # TELEGRAM COMMANDS
 # =========================
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
     await update.message.reply_text(
-        "🚀 Solana Momentum Paper Trading Bot Online"
+        "🚀 Solana Early Momentum Paper Trading Bot Online"
     )
-
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def help_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
     await update.message.reply_text(
         "/stats - Bot statistics\n"
         "/positions - Active positions\n"
         "/pause - Pause bot\n"
         "/resume - Resume bot"
     )
-
-
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
+async def stats(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
     total_trades = wins + losses
-    winrate = (wins / total_trades * 100) if total_trades > 0 else 0
-
+    winrate = (
+        (wins / total_trades * 100)
+        if total_trades > 0 else 0
+    )
     msg = (
         "📊 BOT STATS\n"
         f"Trades: {total_trades}\n"
@@ -152,189 +137,156 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Consecutive Losses: {consecutive_losses}\n"
         f"Active Positions: {len(active_trades)}"
     )
-
     await update.message.reply_text(msg)
-
-
-async def positions(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
+async def positions(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
     if not active_trades:
-        await update.message.reply_text("No active positions.")
+        await update.message.reply_text(
+            "No active positions."
+        )
         return
-
     msg = "📌 ACTIVE POSITIONS\n\n"
-
     for token, trade in active_trades.items():
-
         current_price = trade["current_price"]
-
         pnl = (
             (current_price - trade["entry_price"])
             / trade["entry_price"]
         ) * 100
-
         msg += (
             f"{trade['symbol']}\n"
             f"PnL: {pnl:.2f}%\n"
             f"Entry: {trade['entry_price']}\n"
             f"Current: {current_price}\n\n"
         )
-
     await update.message.reply_text(msg)
-
-
-async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
+async def pause(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
     global paused_until
-
-    paused_until = time.time() + (999999)
-
-    await update.message.reply_text("⏸ Bot paused")
-
-
-async def resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
+    paused_until = time.time() + 999999
+    await update.message.reply_text(
+        "⏸ Bot paused"
+    )
+async def resume(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
     global paused_until
-
     paused_until = 0
-
-    await update.message.reply_text("▶️ Bot resumed")
-
-
+    await update.message.reply_text(
+        "▶️ Bot resumed"
+    )
 # =========================
 # FETCH TOKENS
 # =========================
-
 async def fetch_pairs():
-
     url = "https://api.dexscreener.com/token-profiles/latest/v1"
-
     async with aiohttp.ClientSession() as session:
-
         try:
-
-            async with session.get(url, timeout=20) as response:
-
+            async with session.get(
+                url,
+                timeout=20
+            ) as response:
                 if response.status != 200:
                     return []
-
                 data = await response.json()
-
                 return data
-
         except Exception as e:
-
             logger.error(f"Fetch error: {e}")
-
             return []
-
-
 async def fetch_pair_data(token_address):
-
-    url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
-
+    url = (
+        f"https://api.dexscreener.com/latest/dex/tokens/"
+        f"{token_address}"
+    )
     async with aiohttp.ClientSession() as session:
-
         try:
-
-            async with session.get(url, timeout=20) as response:
-
+            async with session.get(
+                url,
+                timeout=20
+            ) as response:
                 if response.status != 200:
                     return None
-
                 data = await response.json()
-
                 pairs = data.get("pairs", [])
-
                 if not pairs:
                     return None
-
                 return pairs[0]
-
         except Exception as e:
-
             logger.error(f"Pair fetch error: {e}")
-
             return None
-
-
 # =========================
 # FILTER LOGIC
 # =========================
-
 async def analyze_token(token):
-
     try:
-
         if token.get("chainId") != "solana":
             return None
-
         token_address = token.get("tokenAddress")
-
         if not token_address:
             return None
-
         pair = await fetch_pair_data(token_address)
-
         if not pair:
             return None
-
         liquidity = float(
             pair.get("liquidity", {}).get("usd", 0)
         )
-
         volume_24h = float(
             pair.get("volume", {}).get("h24", 0)
         )
-
         buys = int(
-            pair.get("txns", {}).get("h24", {}).get("buys", 0)
+            pair.get("txns", {})
+            .get("h24", {})
+            .get("buys", 0)
         )
-
         sells = int(
-            pair.get("txns", {}).get("h24", {}).get("sells", 0)
+            pair.get("txns", {})
+            .get("h24", {})
+            .get("sells", 0)
         )
-
         price = float(pair.get("priceUsd", 0))
-
-        pair_created_at = pair.get("pairCreatedAt", 0)
-
+        pair_created_at = pair.get(
+            "pairCreatedAt",
+            0
+        )
         age_minutes = calculate_token_age_minutes(
             pair_created_at
         )
-
         # =========================
         # FILTERS
         # =========================
-
         if liquidity < MIN_LIQUIDITY:
             return None
-
         if liquidity > MAX_LIQUIDITY:
             return None
-
         if volume_24h < MIN_VOLUME_24H:
             return None
-
+        if volume_24h > MAX_VOLUME_24H:
+            return None
         if buys < MIN_BUYS:
             return None
-
+        if buys > MAX_BUYS:
+            return None
         if sells > (buys * MAX_SELL_RATIO):
             return None
-
         buy_sell_delta = buys - sells
-
         if buy_sell_delta < MIN_BUY_SELL_DELTA:
             return None
-
+        volume_per_buy = (
+            volume_24h / max(buys, 1)
+        )
+        if volume_per_buy < MIN_VOLUME_PER_BUY:
+            return None
         if age_minutes > MAX_TOKEN_AGE_MINUTES:
             return None
-
-        vol_liq_ratio = volume_24h / liquidity
-
+        vol_liq_ratio = (
+            volume_24h / liquidity
+        )
         if vol_liq_ratio > MAX_VOLUME_LIQ_RATIO:
             return None
-
         momentum_score = calculate_momentum_score(
             buys,
             sells,
@@ -342,11 +294,20 @@ async def analyze_token(token):
             liquidity,
             age_minutes
         )
-
+        if momentum_score < MIN_MOMENTUM_SCORE:
+            return None
+        if momentum_score > MAX_MOMENTUM_SCORE:
+            return None
         return {
             "token_address": token_address,
-            "name": pair.get("baseToken", {}).get("name", "Unknown"),
-            "symbol": pair.get("baseToken", {}).get("symbol", "???"),
+            "name": pair.get(
+                "baseToken",
+                {}
+            ).get("name", "Unknown"),
+            "symbol": pair.get(
+                "baseToken",
+                {}
+            ).get("symbol", "???"),
             "price": price,
             "liquidity": liquidity,
             "volume": volume_24h,
@@ -355,35 +316,24 @@ async def analyze_token(token):
             "age": age_minutes,
             "score": momentum_score,
         }
-
     except Exception as e:
-
         logger.error(f"Analyze error: {e}")
-
         return None
-
-
 # =========================
 # PAPER BUY
 # =========================
-
 async def paper_buy(token_data, app):
-
     global last_trade_time
-
     if len(active_trades) >= MAX_ACTIVE_TRADES:
         return
-
     now = time.time()
-
-    if now - last_trade_time < (COOLDOWN_MINUTES * 60):
+    if now - last_trade_time < (
+        COOLDOWN_MINUTES * 60
+    ):
         return
-
     token_address = token_data["token_address"]
-
     if token_address in active_trades:
         return
-
     active_trades[token_address] = {
         "symbol": token_data["symbol"],
         "entry_price": token_data["price"],
@@ -391,13 +341,12 @@ async def paper_buy(token_data, app):
         "highest_price": token_data["price"],
         "entry_time": time.time(),
     }
-
     last_trade_time = now
-
     msg = (
         "🚀 PAPER BUY\n"
         f"Token:\n"
-        f"{token_data['name']} ({token_data['symbol']})\n"
+        f"{token_data['name']} "
+        f"({token_data['symbol']})\n"
         f"Entry:\n"
         f"${token_data['price']}\n"
         f"Liquidity:\n"
@@ -405,233 +354,219 @@ async def paper_buy(token_data, app):
         f"Volume:\n"
         f"${token_data['volume']:.0f}\n"
         f"Buys/Sells:\n"
-        f"{token_data['buys']} / {token_data['sells']}\n"
+        f"{token_data['buys']} "
+        f"/ {token_data['sells']}\n"
         f"Momentum Score:\n"
         f"{token_data['score']}\n"
         f"Age:\n"
         f"{token_data['age']:.1f} minutes"
     )
-
     await app.bot.send_message(
         chat_id=os.getenv("CHAT_ID"),
         text=msg
     )
-
-
 # =========================
 # PAPER SELL
 # =========================
-
-async def paper_sell(token_address, reason, app):
-
+async def paper_sell(
+    token_address,
+    reason,
+    app
+):
     global wins
     global losses
     global total_pnl
     global consecutive_losses
     global paused_until
-
     trade = active_trades[token_address]
-
     pnl = (
-        (trade["current_price"] - trade["entry_price"])
+        (trade["current_price"]
+        - trade["entry_price"])
         / trade["entry_price"]
     )
-
     pnl_percent = pnl * 100
-
     total_pnl += pnl_percent
-
     if pnl > 0:
         wins += 1
         consecutive_losses = 0
     else:
         losses += 1
         consecutive_losses += 1
-
-    if consecutive_losses >= AUTO_PAUSE_AFTER_LOSSES:
-
+    if (
+        consecutive_losses
+        >= AUTO_PAUSE_AFTER_LOSSES
+    ):
         paused_until = (
             time.time()
             + (PAUSE_DURATION_MINUTES * 60)
         )
-
         await app.bot.send_message(
             chat_id=os.getenv("CHAT_ID"),
             text="⏸ AUTO PAUSE ACTIVATED"
         )
-
     msg = (
         "❌ PAPER SELL\n"
         f"{trade['symbol']}\n"
         f"Reason: {reason}\n"
         f"PnL: {pnl_percent:.2f}%"
     )
-
     await app.bot.send_message(
         chat_id=os.getenv("CHAT_ID"),
         text=msg
     )
-
     del active_trades[token_address]
-
-
 # =========================
 # MANAGE POSITIONS
 # =========================
-
 async def manage_positions(app):
-
     tokens_to_close = []
-
-    for token_address, trade in active_trades.items():
-
-        pair = await fetch_pair_data(token_address)
-
+    for token_address, trade in list(
+        active_trades.items()
+    ):
+        pair = await fetch_pair_data(
+            token_address
+        )
         if not pair:
             continue
-
-        current_price = float(pair.get("priceUsd", 0))
-
+        current_price = float(
+            pair.get("priceUsd", 0)
+        )
         trade["current_price"] = current_price
-
         if current_price > trade["highest_price"]:
             trade["highest_price"] = current_price
-
         pnl = (
-            (current_price - trade["entry_price"])
+            (current_price
+            - trade["entry_price"])
             / trade["entry_price"]
         )
-
         # STOP LOSS
-
         if pnl <= -STOP_LOSS:
-
             tokens_to_close.append(
-                (token_address, "STOP LOSS")
+                (
+                    token_address,
+                    "STOP LOSS"
+                )
             )
-
             continue
-
         # TAKE PROFIT
-
         if pnl >= TAKE_PROFIT:
-
             tokens_to_close.append(
-                (token_address, "TAKE PROFIT")
+                (
+                    token_address,
+                    "TAKE PROFIT"
+                )
             )
-
             continue
-
         # TRAILING STOP
-
         if TRAILING_STOP_ENABLED:
-
             highest_pnl = (
-                (trade["highest_price"] - trade["entry_price"])
+                (
+                    trade["highest_price"]
+                    - trade["entry_price"]
+                )
                 / trade["entry_price"]
             )
-
             drawdown = (
-                (trade["highest_price"] - current_price)
+                (
+                    trade["highest_price"]
+                    - current_price
+                )
                 / trade["highest_price"]
             )
-
             if (
-                highest_pnl >= TRAILING_TRIGGER
-                and drawdown >= TRAILING_GAP
+                highest_pnl
+                >= TRAILING_TRIGGER
+                and drawdown
+                >= TRAILING_GAP
             ):
-
                 tokens_to_close.append(
-                    (token_address, "TRAILING STOP")
+                    (
+                        token_address,
+                        "TRAILING STOP"
+                    )
                 )
-
     for token_address, reason in tokens_to_close:
-
-        await paper_sell(token_address, reason, app)
-
-
+        await paper_sell(
+            token_address,
+            reason,
+            app
+        )
 # =========================
 # MAIN LOOP
 # =========================
-
 async def scanner_loop(app):
-
     while True:
-
         try:
-
             if time.time() < paused_until:
-
                 await asyncio.sleep(30)
-
                 continue
-
             await manage_positions(app)
-
             pairs = await fetch_pairs()
-
-            logger.info(f"Fetched {len(pairs)} tokens")
-
+            logger.info(
+                f"Fetched {len(pairs)} tokens"
+            )
             candidates = []
-
             for token in pairs:
-
-                analyzed = await analyze_token(token)
-
+                analyzed = await analyze_token(
+                    token
+                )
                 if analyzed:
                     candidates.append(analyzed)
-
             candidates.sort(
                 key=lambda x: x["score"],
                 reverse=True
             )
-
             logger.info(
-                f"Valid candidates: {len(candidates)}"
+                f"Valid candidates: "
+                f"{len(candidates)}"
             )
-
-            for token_data in candidates[:3]:
-
-                await paper_buy(token_data, app)
-
-            await asyncio.sleep(CHECK_INTERVAL)
-
+            # 只取前2避免亂追
+            for token_data in candidates[:2]:
+                await paper_buy(
+                    token_data,
+                    app
+                )
+            await asyncio.sleep(
+                CHECK_INTERVAL
+            )
         except Exception as e:
-
-            logger.error(f"Scanner loop error: {e}")
-
+            logger.error(
+                f"Scanner loop error: {e}"
+            )
             await asyncio.sleep(15)
-
-
 # =========================
 # MAIN
 # =========================
-
 async def post_init(app):
-
-    asyncio.create_task(scanner_loop(app))
-
-
+    asyncio.create_task(
+        scanner_loop(app)
+    )
 def main():
-
     app = (
         Application.builder()
         .token(BOT_TOKEN)
         .post_init(post_init)
         .build()
     )
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("stats", stats))
-    app.add_handler(CommandHandler("positions", positions))
-    app.add_handler(CommandHandler("pause", pause))
-    app.add_handler(CommandHandler("resume", resume))
-
+    app.add_handler(
+        CommandHandler("start", start)
+    )
+    app.add_handler(
+        CommandHandler("help", help_command)
+    )
+    app.add_handler(
+        CommandHandler("stats", stats)
+    )
+    app.add_handler(
+        CommandHandler("positions", positions)
+    )
+    app.add_handler(
+        CommandHandler("pause", pause)
+    )
+    app.add_handler(
+        CommandHandler("resume", resume)
+    )
     logger.info("Bot started")
-
     app.run_polling()
-
-
 if __name__ == "__main__":
     main()
