@@ -1,6 +1,6 @@
 # =========================================================
-# SAFE MODE V4 PROFESSIONAL ULTRA
-# TG + X + SMART WALLET + AI SCORE + ANTI RUG
+# SAFE MODE V5 PRE-LIVE PROFESSIONAL
+# TG + X + SMART WALLET + AI + DASHBOARD READY
 # PAPER TRADE ONLY
 # OVERWRITE READY
 # =========================================================
@@ -39,34 +39,34 @@ TG_SESSION = "safe_mode_scanner"
 # SAFE MODE SETTINGS
 # =========================================================
 
-MIN_LIQUIDITY = 3500
-MAX_LIQUIDITY = 25000
+MIN_LIQUIDITY = 4000
+MAX_LIQUIDITY = 30000
 
-MIN_VOLUME_24H = 4000
-MIN_VOLUME_5M = 500
+MIN_VOLUME_24H = 5000
+MIN_VOLUME_5M = 600
 
-MIN_BUYS_24H = 30
-MIN_BUYS_5M = 6
+MIN_BUYS_24H = 35
+MIN_BUYS_5M = 8
 
-MAX_SELL_RATIO = 0.95
-MIN_BUY_DOMINANCE = 1.15
+MAX_SELL_RATIO = 0.92
+MIN_BUY_DOMINANCE = 1.20
 
-MIN_VOLUME_PER_BUY = 200
+MIN_VOLUME_PER_BUY = 220
 
-MAX_TOKEN_AGE_MINUTES = 35
+MAX_TOKEN_AGE_MINUTES = 45
 
 MAX_ACTIVE_TRADES = 2
 
-TAKE_PROFIT = 0.30
+TAKE_PROFIT = 0.35
 STOP_LOSS = 0.12
 
-TRAILING_STOP_TRIGGER = 0.20
+TRAILING_STOP_TRIGGER = 0.25
 TRAILING_STOP_GAP = 0.10
 
 AUTO_PAUSE_AFTER_LOSSES = 3
 AUTO_PAUSE_MINUTES = 60
 
-FINAL_SCORE_THRESHOLD = 80
+FINAL_SCORE_THRESHOLD = 95
 
 # =========================================================
 # TG GROUPS
@@ -81,11 +81,11 @@ TARGET_GROUPS = [
 ]
 
 GROUP_WEIGHTS = {
-    "Fire Dragon Alpha": 5,
-    "Chigga's Gambles": 4,
-    "Gambler's Lounge": 3,
+    "Fire Dragon Alpha": 6,
+    "Chigga's Gambles": 5,
+    "Gambler's Lounge": 4,
     "XXYY MEME Group": 2,
-    "Crypto Tribe": 3,
+    "Crypto Tribe": 4,
 }
 
 # =========================================================
@@ -104,19 +104,22 @@ X_HEAT_KEYWORDS = [
     "early",
     "alpha",
     "send",
+    "trending",
+    "breaking",
     "next",
 ]
 
 # =========================================================
-# SMART WALLET TRACKING
+# SMART WALLET
 # =========================================================
 
 SMART_WALLET_KEYWORDS = [
     "smart money",
+    "whale",
     "ape",
     "loaded",
-    "whale",
     "alpha",
+    "conviction",
     "early",
 ]
 
@@ -130,11 +133,11 @@ logging.basicConfig(
 )
 
 # =========================================================
-# SQLITE DATABASE
+# DATABASE
 # =========================================================
 
 conn = sqlite3.connect(
-    "safe_mode_v4.db"
+    "safe_mode_v5.db"
 )
 
 cursor = conn.cursor()
@@ -146,6 +149,9 @@ CREATE TABLE IF NOT EXISTS trades (
     exit REAL,
     pnl REAL,
     result TEXT,
+    social REAL,
+    xscore REAL,
+    momentum REAL,
     created_at TEXT
 )
 """)
@@ -153,6 +159,13 @@ CREATE TABLE IF NOT EXISTS trades (
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS blacklist (
     token TEXT
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS stats (
+    key TEXT,
+    value TEXT
 )
 """)
 
@@ -208,7 +221,7 @@ def buy_dominance(buys, sells):
     return buys / sells
 
 # =========================================================
-# TELEGRAM ALERT
+# ALERTS
 # =========================================================
 
 async def send_alert(message):
@@ -269,6 +282,8 @@ async def tg_scanner(event):
         if not tokens:
             return
 
+        lowered = text.lower()
+
         for token in tokens:
 
             if token not in mention_cache:
@@ -278,50 +293,49 @@ async def tg_scanner(event):
                     "groups": set(),
                     "smart_wallet": 0,
                     "ai_score": 0,
+                    "velocity": 0,
                     "last_seen": time.time(),
                 }
 
-            mention_cache[token]["mentions"] += 1
+            data = mention_cache[token]
 
-            mention_cache[token]["groups"].add(
-                group_name
-            )
+            data["mentions"] += 1
 
-            mention_cache[token]["last_seen"] = (
-                time.time()
-            )
+            data["groups"].add(group_name)
 
-            # SMART WALLET DETECT
+            now = time.time()
 
-            lowered = text.lower()
+            if now - data["last_seen"] < 120:
+                data["velocity"] += 4
+
+            data["last_seen"] = now
+
+            # SMART WALLET SCORE
 
             for kw in SMART_WALLET_KEYWORDS:
 
                 if kw in lowered:
+                    data["smart_wallet"] += 6
 
-                    mention_cache[token][
-                        "smart_wallet"
-                    ] += 5
-
-            # AI SENTIMENT SCORE
+            # AI SENTIMENT
 
             positive_words = [
                 "strong",
                 "bullish",
                 "runner",
+                "moon",
                 "early",
                 "send",
-                "moon",
-                "alpha",
+                "conviction",
                 "good",
+                "best",
+                "viral",
             ]
 
             for p in positive_words:
 
                 if p in lowered:
-                    mention_cache[token][
-                        "ai_score"
-                    ] += 2
+                    data["ai_score"] += 2
 
             logging.info(
                 f"TG MENTION | "
@@ -347,12 +361,14 @@ def social_score(token):
 
     score += data["mentions"] * 4
 
-    for g in data["groups"]:
-        score += GROUP_WEIGHTS.get(g, 1)
+    score += data["velocity"]
 
     score += data["smart_wallet"]
 
     score += data["ai_score"]
+
+    for g in data["groups"]:
+        score += GROUP_WEIGHTS.get(g, 1)
 
     return score
 
@@ -369,7 +385,7 @@ def x_heat(symbol, name):
     for kw in X_HEAT_KEYWORDS:
 
         if kw in text:
-            score += 3
+            score += 4
 
     return score
 
@@ -429,7 +445,7 @@ async def fetch_pair(token):
     return None
 
 # =========================================================
-# RUG CHECK
+# ADVANCED ANTI RUG
 # =========================================================
 
 def anti_rug(pair):
@@ -450,7 +466,12 @@ def anti_rug(pair):
         if liquidity > MAX_LIQUIDITY:
             return False
 
-        if fdv > 5000000:
+        if fdv > 7000000:
+            return False
+
+        liquidity_ratio = fdv / max(liquidity, 1)
+
+        if liquidity_ratio > 150:
             return False
 
         return True
@@ -486,22 +507,33 @@ def momentum_score(pair):
             pair["txns"]["m5"]["buys"]
         )
 
+        sells5 = int(
+            pair["txns"]["m5"]["sells"]
+        )
+
         dominance = buy_dominance(
             buys24,
             sells24
         )
 
+        short_dominance = buy_dominance(
+            buys5,
+            sells5
+        )
+
         score = 0
 
-        score += min(volume24 / 1000, 25)
+        score += min(volume24 / 1000, 30)
 
-        score += min(volume5 / 50, 25)
+        score += min(volume5 / 50, 30)
 
-        score += min(buys24 / 4, 20)
+        score += min(buys24 / 3, 20)
 
-        score += min(buys5 * 2, 15)
+        score += min(buys5 * 3, 20)
 
-        score += min(dominance * 10, 15)
+        score += min(dominance * 12, 20)
+
+        score += min(short_dominance * 8, 15)
 
         return round(score, 2)
 
@@ -515,10 +547,6 @@ def momentum_score(pair):
 def passes_filters(pair):
 
     try:
-
-        liquidity = float(
-            pair["liquidity"]["usd"]
-        )
 
         volume24 = float(
             pair["volume"]["h24"]
@@ -594,24 +622,68 @@ def passes_filters(pair):
         return False
 
 # =========================================================
-# DYNAMIC POSITION SCORE
+# DYNAMIC POSITION
 # =========================================================
 
-def dynamic_position_size(score):
+def dynamic_size(score):
+
+    if score >= 160:
+        return 1.6
+
+    if score >= 140:
+        return 1.4
 
     if score >= 120:
-        return 1.5
-
-    if score >= 100:
         return 1.2
 
     return 1.0
 
 # =========================================================
+# SAVE TRADE
+# =========================================================
+
+def save_trade(
+    token,
+    entry,
+    exit_price,
+    pnl,
+    result,
+    social,
+    xscore,
+    momentum
+):
+
+    cursor.execute(
+        """
+        INSERT INTO trades
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            token,
+            entry,
+            exit_price,
+            pnl,
+            result,
+            social,
+            xscore,
+            momentum,
+            str(datetime.utcnow())
+        )
+    )
+
+    conn.commit()
+
+# =========================================================
 # PAPER BUY
 # =========================================================
 
-async def paper_buy(pair, final_score):
+async def paper_buy(
+    pair,
+    social,
+    xscore,
+    momentum,
+    final
+):
 
     token = pair["baseToken"]["symbol"]
     address = pair["baseToken"]["address"]
@@ -624,54 +696,29 @@ async def paper_buy(pair, final_score):
 
     entry = float(pair["priceUsd"])
 
-    position_size = dynamic_position_size(
-        final_score
-    )
+    size = dynamic_size(final)
 
     active_trades[address] = {
         "token": token,
         "entry": entry,
         "highest": entry,
-        "size": position_size,
+        "size": size,
+        "social": social,
+        "xscore": xscore,
+        "momentum": momentum,
         "buy_time": time.time(),
     }
 
     await send_alert(
-        f"🔥 SAFE MODE V4 BUY\n\n"
+        f"🔥 SAFE MODE V5 BUY\n\n"
         f"{token}\n"
-        f"Score: {final_score}\n"
-        f"Size: {position_size}x\n"
+        f"Social: {social}\n"
+        f"X Heat: {xscore}\n"
+        f"Momentum: {momentum}\n"
+        f"Final: {final}\n"
+        f"Size: {size}x\n"
         f"Entry: ${entry}"
     )
-
-# =========================================================
-# SAVE TRADE
-# =========================================================
-
-def save_trade(
-    token,
-    entry,
-    exit_price,
-    pnl,
-    result
-):
-
-    cursor.execute(
-        """
-        INSERT INTO trades
-        VALUES (?, ?, ?, ?, ?, ?)
-        """,
-        (
-            token,
-            entry,
-            exit_price,
-            pnl,
-            result,
-            str(datetime.utcnow())
-        )
-    )
-
-    conn.commit()
 
 # =========================================================
 # MANAGE TRADES
@@ -724,7 +771,10 @@ async def manage_trades():
                         entry,
                         current,
                         pnl,
-                        "TP"
+                        "TP",
+                        trade["social"],
+                        trade["xscore"],
+                        trade["momentum"]
                     )
 
                     trade_history.append(1)
@@ -746,7 +796,10 @@ async def manage_trades():
                         entry,
                         current,
                         pnl,
-                        "SL"
+                        "SL",
+                        trade["social"],
+                        trade["xscore"],
+                        trade["momentum"]
                     )
 
                     trade_history.append(-1)
@@ -771,7 +824,10 @@ async def manage_trades():
                         entry,
                         current,
                         pnl,
-                        "TRAIL"
+                        "TRAIL",
+                        trade["social"],
+                        trade["xscore"],
+                        trade["momentum"]
                     )
 
                     trade_history.append(1)
@@ -835,6 +891,11 @@ async def scanner_loop():
                 if token in recent_tokens:
                     continue
 
+                social = social_score(token)
+
+                if social < 20:
+                    continue
+
                 pair = await fetch_pair(token)
 
                 if not pair:
@@ -853,8 +914,6 @@ async def scanner_loop():
                 name = pair[
                     "baseToken"
                 ].get("name", "")
-
-                social = social_score(token)
 
                 xscore = x_heat(
                     symbol,
@@ -895,6 +954,9 @@ async def scanner_loop():
 
                     await paper_buy(
                         pair,
+                        social,
+                        xscore,
+                        momentum,
                         final
                     )
 
@@ -917,7 +979,7 @@ async def status(
 ):
 
     msg = (
-        f"SAFE MODE V4 ULTRA\n\n"
+        f"SAFE MODE V5 PRE-LIVE\n\n"
         f"Trades: {len(active_trades)}\n"
         f"Mentions: {len(mention_cache)}\n"
         f"Recent: {len(recent_tokens)}\n"
@@ -958,7 +1020,7 @@ async def positions(
 async def main():
 
     logging.info(
-        "STARTING SAFE MODE V4 ULTRA"
+        "STARTING SAFE MODE V5 PRE-LIVE"
     )
 
     await tg_client.connect()
