@@ -17,40 +17,45 @@ CHAT_ID = os.getenv("CHAT_ID")
 CHECK_INTERVAL = 45
 PAPER_TRADE_AMOUNT = 100
 # =========================
-# UPGRADED EARLY MOMENTUM FILTERS
+# FULL UPGRADE SETTINGS
 # =========================
-MIN_LIQUIDITY = 1800
-MAX_LIQUIDITY = 18000
-MIN_VOLUME_24H = 700
-MAX_VOLUME_24H = 45000
-MIN_BUYS = 10
-MAX_BUYS = 350
-MAX_SELL_RATIO = 1.25
-MIN_BUY_DOMINANCE = 1.08
-MIN_BUY_SELL_DELTA = 5
-MIN_VOLUME_PER_BUY = 70
-MAX_TOKEN_AGE_MINUTES = 35
-MAX_VOLUME_LIQ_RATIO = 8
-MIN_MOMENTUM_SCORE = 80
-MAX_MOMENTUM_SCORE = 1200
-# NEW EARLY MOMENTUM FILTERS
-MIN_5M_VOLUME = 250
-MIN_5M_BUYS = 4
-# =========================
-# RISK MANAGEMENT
-# =========================
-TAKE_PROFIT = 0.25
-STOP_LOSS = 0.12
+# EARLY ENTRY
+MIN_LIQUIDITY = 2200
+MAX_LIQUIDITY = 16000
+MIN_VOLUME_24H = 900
+MAX_VOLUME_24H = 35000
+MIN_5M_VOLUME = 300
+MIN_5M_BUYS = 5
+MIN_1M_BUYS = 2
+# BUY PRESSURE
+MIN_BUYS = 15
+MAX_BUYS = 260
+MAX_SELL_RATIO = 1.18
+MIN_BUY_DOMINANCE = 1.15
+MIN_BUY_SELL_DELTA = 10
+# QUALITY
+MIN_VOLUME_PER_BUY = 90
+MAX_TOKEN_AGE_MINUTES = 28
+MAX_VOLUME_LIQ_RATIO = 5
+# MOMENTUM
+MIN_MOMENTUM_SCORE = 120
+MAX_MOMENTUM_SCORE = 750
+# HOLDERS FILTER
+MIN_HOLDERS = 80
+# REENTRY BLOCK
+REENTRY_BLOCK_MINUTES = 120
+# RISK
+TAKE_PROFIT = 0.30
+STOP_LOSS_LOW_LIQ = 0.18
+STOP_LOSS_HIGH_LIQ = 0.10
 TRAILING_STOP_ENABLED = True
-TRAILING_TRIGGER = 0.15
-TRAILING_GAP = 0.10
-# =========================
-# BOT SETTINGS
-# =========================
+TRAILING_TRIGGER = 0.18
+TRAILING_GAP = 0.08
+# BOT
 MAX_ACTIVE_TRADES = 2
-COOLDOWN_MINUTES = 20
+COOLDOWN_MINUTES = 30
 AUTO_PAUSE_AFTER_LOSSES = 3
-PAUSE_DURATION_MINUTES = 45
+PAUSE_DURATION_MINUTES = 60
 # =========================
 # GLOBALS
 # =========================
@@ -62,6 +67,8 @@ losses = 0
 consecutive_losses = 0
 paused_until = 0
 last_trade_time = 0
+recently_traded_tokens = {}
+blacklisted_tokens = set()
 # =========================
 # LOGGING
 # =========================
@@ -87,7 +94,8 @@ def calculate_momentum_score(
     liquidity,
     age_minutes,
     volume_5m,
-    buys_5m
+    buys_5m,
+    buys_1m,
 ):
     try:
         if sells <= 0:
@@ -95,11 +103,12 @@ def calculate_momentum_score(
         buy_sell_strength = buys / sells
         volume_quality = volume_24h / liquidity
         score = (
-            (buys * 1.8)
-            + (buy_sell_strength * 100)
-            + (volume_quality * 60)
-            + (volume_5m / 12)
-            + (buys_5m * 8)
+            (buys * 1.6)
+            + (buy_sell_strength * 120)
+            + (volume_quality * 55)
+            + (volume_5m / 10)
+            + (buys_5m * 10)
+            + (buys_1m * 18)
             - (age_minutes * 3)
         )
         return round(score, 2)
@@ -225,6 +234,28 @@ async def fetch_pair_data(token_address):
         except Exception as e:
             logger.error(f"Pair fetch error: {e}")
             return None
+async def fetch_holder_count(token_address):
+    url = (
+        f"https://api.dexscreener.com/latest/dex/tokens/"
+        f"{token_address}"
+    )
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(
+                url,
+               timeout=20
+            ) as response:
+                if response.status != 200:
+                    return 0
+                data = await response.json()
+                pairs = data.get("pairs", [])
+                if not pairs:
+                    return 0
+                info = pairs[0].get("info", {})
+                holders = info.get("holders", 0)
+                return int(holders)
+        except:
+            return 0
 # =========================
 # FILTER LOGIC
 # =========================
@@ -233,6 +264,8 @@ async def analyze_token(token):
         if token.get("chainId") != "solana":
             return None
         token_address = token.get("tokenAddress")
+        if token_address in blacklisted_tokens:
+            return None
         if not token_address:
             return None
         pair = await fetch_pair_data(token_address)
@@ -262,6 +295,11 @@ async def analyze_token(token):
             .get("m5", {})
             .get("buys", 0)
         )
+        buys_1m = int(
+            pair.get("txns", {})
+            .get("m1", {})
+            .get("buys", 0)
+        )
         price = float(pair.get("priceUsd", 0))
         pair_created_at = pair.get(
             "pairCreatedAt",
@@ -270,9 +308,14 @@ async def analyze_token(token):
         age_minutes = calculate_token_age_minutes(
             pair_created_at
         )
+        holders = await fetch_holder_count(
+            token_address
+        )
         # =========================
         # FILTERS
         # =========================
+        if holders < MIN_HOLDERS:
+            return None
         if liquidity < MIN_LIQUIDITY:
             return None
         if liquidity > MAX_LIQUIDITY:
@@ -284,6 +327,8 @@ async def analyze_token(token):
         if volume_5m < MIN_5M_VOLUME:
             return None
         if buys_5m < MIN_5M_BUYS:
+            return None
+        if buys_1m < MIN_1M_BUYS:
             return None
         if buys < MIN_BUYS:
             return None
@@ -316,7 +361,8 @@ async def analyze_token(token):
             liquidity,
             age_minutes,
             volume_5m,
-            buys_5m
+            buys_5m,
+            buys_1m,
         )
         if momentum_score < MIN_MOMENTUM_SCORE:
             return None
@@ -338,7 +384,9 @@ async def analyze_token(token):
             "volume_5m": volume_5m,
             "buys": buys,
             "buys_5m": buys_5m,
+            "buys_1m": buys_1m,
             "sells": sells,
+            "holders": holders,
             "buy_dominance": buy_dominance,
             "age": age_minutes,
             "score": momentum_score,
@@ -359,6 +407,13 @@ async def paper_buy(token_data, app):
     ):
         return
     token_address = token_data["token_address"]
+    if token_address in recently_traded_tokens:
+        last_trade = recently_traded_tokens[token_address]
+        if (
+            time.time() - last_trade
+            < REENTRY_BLOCK_MINUTES * 60
+        ):
+            return
     if token_address in active_trades:
         return
     active_trades[token_address] = {
@@ -367,10 +422,12 @@ async def paper_buy(token_data, app):
         "current_price": token_data["price"],
         "highest_price": token_data["price"],
         "entry_time": time.time(),
+        "entry_liquidity": token_data["liquidity"],
     }
     last_trade_time = now
     msg = (
         "🚀 PAPER BUY\n\n"
+        f"Token:\n"
         f"{token_data['name']} "
         f"({token_data['symbol']})\n\n"
         f"Entry:\n"
@@ -386,6 +443,10 @@ async def paper_buy(token_data, app):
         f"/ {token_data['sells']}\n\n"
         f"Buy Dominance:\n"
         f"{token_data['buy_dominance']:.2f}\n\n"
+        f"Holders:\n"
+        f"{token_data['holders']}\n\n"
+        f"1M Buys:\n"
+        f"{token_data['buys_1m']}\n\n"
         f"5M Buys:\n"
         f"{token_data['buys_5m']}\n\n"
         f"Momentum Score:\n"
@@ -446,6 +507,7 @@ async def paper_sell(
         chat_id=CHAT_ID,
         text=msg
     )
+    recently_traded_tokens[token_address] = time.time()
     del active_trades[token_address]
 # =========================
 # MANAGE POSITIONS
@@ -471,7 +533,12 @@ async def manage_positions(app):
             - trade["entry_price"])
             / trade["entry_price"]
         )
-        if pnl <= -STOP_LOSS:
+        dynamic_sl = (
+            STOP_LOSS_LOW_LIQ
+            if trade["entry_liquidity"] < 6000
+            else STOP_LOSS_HIGH_LIQ
+        )
+        if pnl <= -dynamic_sl:
             tokens_to_close.append(
                 (
                     token_address,
@@ -554,8 +621,10 @@ async def scanner_loop(app):
                     f"HOT TOKEN | "
                     f"{token_data['symbol']} | "
                     f"Score {token_data['score']} | "
-                    f"5m Buys {token_data['buys_5m']} | "
-                    f"Dominance {token_data['buy_dominance']:.2f}"
+                    f"1m {token_data['buys_1m']} | "
+                    f"5m {token_data['buys_5m']} | "
+                    f"Holders {token_data['holders']} | "
+                    f"Dom {token_data['buy_dominance']:.2f}"
                 )
             for token_data in candidates[:2]:
                 await paper_buy(
