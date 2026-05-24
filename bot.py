@@ -3,7 +3,6 @@ import aiohttp
 import logging
 import os
 import time
-from datetime import datetime
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -27,6 +26,7 @@ MAX_VOLUME_24H = 45000
 MIN_BUYS = 10
 MAX_BUYS = 350
 MAX_SELL_RATIO = 1.25
+MIN_BUY_DOMINANCE = 1.08
 MIN_BUY_SELL_DELTA = 5
 MIN_VOLUME_PER_BUY = 70
 MAX_TOKEN_AGE_MINUTES = 35
@@ -291,6 +291,9 @@ async def analyze_token(token):
             return None
         if sells > (buys * MAX_SELL_RATIO):
             return None
+        buy_dominance = buys / max(sells, 1)
+        if buy_dominance < MIN_BUY_DOMINANCE:
+            return None
         buy_sell_delta = buys - sells
         if buy_sell_delta < MIN_BUY_SELL_DELTA:
             return None
@@ -336,6 +339,7 @@ async def analyze_token(token):
             "buys": buys,
             "buys_5m": buys_5m,
             "sells": sells,
+            "buy_dominance": buy_dominance,
             "age": age_minutes,
             "score": momentum_score,
         }
@@ -380,6 +384,8 @@ async def paper_buy(token_data, app):
         f"24H Buys/Sells:\n"
         f"{token_data['buys']} "
         f"/ {token_data['sells']}\n\n"
+        f"Buy Dominance:\n"
+        f"{token_data['buy_dominance']:.2f}\n\n"
         f"5M Buys:\n"
         f"{token_data['buys_5m']}\n\n"
         f"Momentum Score:\n"
@@ -465,7 +471,6 @@ async def manage_positions(app):
             - trade["entry_price"])
             / trade["entry_price"]
         )
-        # STOP LOSS
         if pnl <= -STOP_LOSS:
             tokens_to_close.append(
                 (
@@ -474,7 +479,6 @@ async def manage_positions(app):
                 )
             )
             continue
-        # TAKE PROFIT
         if pnl >= TAKE_PROFIT:
             tokens_to_close.append(
                 (
@@ -483,7 +487,6 @@ async def manage_positions(app):
                 )
             )
             continue
-        # TRAILING STOP
         if TRAILING_STOP_ENABLED:
             highest_pnl = (
                 (
@@ -546,15 +549,14 @@ async def scanner_loop(app):
                 f"Valid candidates: "
                 f"{len(candidates)}"
             )
-            # HOT TOKEN LOGS
             for token_data in candidates[:5]:
                 logger.info(
                     f"HOT TOKEN | "
                     f"{token_data['symbol']} | "
                     f"Score {token_data['score']} | "
-                    f"5m Buys {token_data['buys_5m']}"
+                    f"5m Buys {token_data['buys_5m']} | "
+                    f"Dominance {token_data['buy_dominance']:.2f}"
                 )
-            # TOP 2 ONLY
             for token_data in candidates[:2]:
                 await paper_buy(
                     token_data,
@@ -601,7 +603,6 @@ def main():
         CommandHandler("resume", resume)
     )
     logger.info("Bot started")
-    # FIX TELEGRAM CONFLICT
     app.run_polling(
         drop_pending_updates=True
     )
