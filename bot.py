@@ -3,10 +3,12 @@ import logging
 import os
 import random
 import re
+import sqlite3
 import time
 from datetime import datetime
 
 import aiohttp
+
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -25,6 +27,8 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
 SESSION_NAME = "safe_mode_scanner"
 
 # =========================================
@@ -39,8 +43,6 @@ MIN_BUYS = 20
 
 MAX_SELL_RATIO = 1.05
 MIN_BUY_DOMINANCE = 1.10
-
-MAX_TOKEN_AGE_MINUTES = 25
 
 MAX_ACTIVE_TRADES = 2
 
@@ -62,26 +64,45 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # =========================================
+# DATABASE
+# =========================================
+
+conn = sqlite3.connect("safe_mode.db")
+
+cursor = conn.cursor()
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS mentions (
+    token TEXT,
+    group_name TEXT,
+    timestamp TEXT
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS trades (
+    token TEXT,
+    social_score REAL,
+    entry_price REAL,
+    size REAL,
+    timestamp TEXT
+)
+""")
+
+conn.commit()
+
+# =========================================
 # GLOBALS
 # =========================================
 
 active_trades = {}
+
 recent_mentions = []
 recent_tokens = []
 
-paused_until = 0
-
 mention_cache = {}
 
-# =========================================
-# TELEGRAM CLIENT
-# =========================================
-
-tg_client = TelegramClient(
-    SESSION_NAME,
-    API_ID,
-    API_HASH
-)
+paused_until = 0
 
 # =========================================
 # TARGET GROUPS
@@ -95,13 +116,57 @@ TARGET_GROUPS = [
 ]
 
 # =========================================
-# TOKEN REGEX
+# X HEAT KEYWORDS
+# =========================================
+
+X_HEAT_KEYWORDS = [
+    "moon",
+    "100x",
+    "send",
+    "runner",
+    "ape",
+    "viral",
+    "cto",
+    "gem",
+    "early",
+    "pump",
+]
+
+# =========================================
+# REGEX
 # =========================================
 
 TOKEN_REGEX = r"\b[1-9A-HJ-NP-Za-km-z]{32,44}\b"
 
 # =========================================
+# TELETHON
+# =========================================
+
+tg_client = TelegramClient(
+    SESSION_NAME,
+    API_ID,
+    API_HASH
+)
+
+# =========================================
 # COMMANDS
+# =========================================
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    msg = """
+🤖 SAFE MODE COMMANDS
+
+/status
+/positions
+/stats
+/recent
+/groups
+/help
+"""
+
+    await update.message.reply_text(msg)
+
 # =========================================
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -120,16 +185,22 @@ Scanner: ACTIVE
 
     await update.message.reply_text(msg)
 
+# =========================================
 
 async def positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not active_trades:
-        await update.message.reply_text("No active positions.")
+
+        await update.message.reply_text(
+            "No active positions."
+        )
+
         return
 
     msg = "📊 ACTIVE POSITIONS\n\n"
 
     for token, data in active_trades.items():
+
         msg += (
             f"{token[:8]}...\n"
             f"Entry: {data['entry_price']}\n"
@@ -138,18 +209,127 @@ async def positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(msg)
 
+# =========================================
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    msg = """
-🤖 SAFE MODE COMMANDS
+    cursor.execute("SELECT COUNT(*) FROM trades")
 
-/status
-/positions
-/help
+    total_trades = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COUNT(*) FROM mentions")
+
+    total_mentions = cursor.fetchone()[0]
+
+    cursor.execute("""
+    SELECT group_name, COUNT(*)
+    FROM mentions
+    GROUP BY group_name
+    ORDER BY COUNT(*) DESC
+    LIMIT 1
+    """)
+
+    best_group = cursor.fetchone()
+
+    best_group_name = (
+        best_group[0]
+        if best_group
+        else "N/A"
+    )
+
+    msg = f"""
+📈 SAFE MODE STATS
+
+Total Trades: {total_trades}
+Total Mentions: {total_mentions}
+
+Best Group:
+{best_group_name}
 """
 
     await update.message.reply_text(msg)
+
+# =========================================
+
+async def recent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not recent_tokens:
+
+        await update.message.reply_text(
+            "No recent tokens."
+        )
+
+        return
+
+    msg = "🔥 RECENT TOKENS\n\n"
+
+    for token in recent_tokens[-10:]:
+
+        msg += f"{token[:12]}...\n"
+
+    await update.message.reply_text(msg)
+
+# =========================================
+
+async def groups_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    cursor.execute("""
+    SELECT group_name, COUNT(*)
+    FROM mentions
+    GROUP BY group_name
+    ORDER BY COUNT(*) DESC
+    LIMIT 10
+    """)
+
+    rows = cursor.fetchall()
+
+    if not rows:
+
+        await update.message.reply_text(
+            "No group stats yet."
+        )
+
+        return
+
+    msg = "🏆 TOP GROUPS\n\n"
+
+    for group, count in rows:
+
+        msg += f"{group}: {count}\n"
+
+    await update.message.reply_text(msg)
+
+# =========================================
+# X HEAT
+# =========================================
+
+def calculate_x_heat():
+
+    score = 0
+
+    for keyword in X_HEAT_KEYWORDS:
+
+        score += random.randint(0, 3)
+
+    return score
+
+# =========================================
+# SOCIAL SCORE
+# =========================================
+
+def calculate_social_score(token):
+
+    mentions = mention_cache.get(token, 0)
+
+    score = mentions * 12
+
+    x_heat = calculate_x_heat()
+
+    score += x_heat
+
+    score += random.randint(0, 10)
+
+    return score
 
 # =========================================
 # DEXSCREENER
@@ -160,6 +340,7 @@ async def fetch_pairs():
     url = "https://api.dexscreener.com/token-profiles/latest/v1"
 
     try:
+
         async with aiohttp.ClientSession() as session:
 
             async with session.get(url, timeout=15) as response:
@@ -175,33 +356,73 @@ async def fetch_pairs():
         return []
 
 # =========================================
-# SOCIAL SCORE
+# TG SCANNER
 # =========================================
 
-def calculate_social_score(token):
+@tg_client.on(events.NewMessage)
+async def tg_message_handler(event):
 
-    score = 0
+    try:
 
-    mentions = mention_cache.get(token, 0)
+        group_name = getattr(
+            event.chat,
+            "title",
+            "UNKNOWN"
+        )
 
-    score += mentions * 12
+        matched = False
 
-    heat_keywords = [
-        "alpha",
-        "send",
-        "moon",
-        "runner",
-        "gem",
-        "ape",
-        "100x",
-        "early",
-    ]
+        for group in TARGET_GROUPS:
 
-    random_heat = random.randint(0, 15)
+            if group.lower() in group_name.lower():
 
-    score += random_heat
+                matched = True
+                break
 
-    return score
+        if not matched:
+            return
+
+        message = event.raw_text
+
+        matches = re.findall(
+            TOKEN_REGEX,
+            message
+        )
+
+        if not matches:
+            return
+
+        for token in matches:
+
+            mention_cache[token] = (
+                mention_cache.get(token, 0) + 1
+            )
+
+            recent_mentions.append(token)
+
+            if len(recent_mentions) > 50:
+                recent_mentions.pop(0)
+
+            cursor.execute("""
+            INSERT INTO mentions
+            VALUES (?, ?, ?)
+            """, (
+                token,
+                group_name,
+                datetime.utcnow().isoformat()
+            ))
+
+            conn.commit()
+
+            logger.info(
+                f"TG MENTION | "
+                f"{token[:8]} | "
+                f"{group_name}"
+            )
+
+    except Exception as e:
+
+        logger.error(f"TG ERROR: {e}")
 
 # =========================================
 # SCANNER LOOP
@@ -209,16 +430,9 @@ def calculate_social_score(token):
 
 async def scanner_loop(app):
 
-    global paused_until
-
     while True:
 
         try:
-
-            if time.time() < paused_until:
-
-                await asyncio.sleep(20)
-                continue
 
             logger.info("SCANNING TOKENS...")
 
@@ -233,15 +447,39 @@ async def scanner_loop(app):
 
                 try:
 
-                    liquidity = float(pair.get("liquidity", {}).get("usd", 0))
-                    volume = float(pair.get("volume", {}).get("h24", 0))
+                    liquidity = float(
+                        pair.get(
+                            "liquidity",
+                            {}
+                        ).get("usd", 0)
+                    )
 
-                    buys = pair.get("txns", {}).get("h24", {}).get("buys", 0)
-                    sells = pair.get("txns", {}).get("h24", {}).get("sells", 0)
+                    volume = float(
+                        pair.get(
+                            "volume",
+                            {}
+                        ).get("h24", 0)
+                    )
 
-                    token_address = pair.get("tokenAddress")
+                    buys = pair.get(
+                        "txns",
+                        {}
+                    ).get(
+                        "h24",
+                        {}
+                    ).get("buys", 0)
 
-                    if not token_address:
+                    sells = pair.get(
+                        "txns",
+                        {}
+                    ).get(
+                        "h24",
+                        {}
+                    ).get("sells", 0)
+
+                    token = pair.get("tokenAddress")
+
+                    if not token:
                         continue
 
                     if liquidity < MIN_LIQUIDITY:
@@ -261,122 +499,101 @@ async def scanner_loop(app):
                     if sell_ratio > MAX_SELL_RATIO:
                         continue
 
-                    buy_dominance = buys / max(sells, 1)
+                    dominance = buys / max(sells, 1)
 
-                    if buy_dominance < MIN_BUY_DOMINANCE:
+                    if dominance < MIN_BUY_DOMINANCE:
                         continue
 
-                    social_score = calculate_social_score(token_address)
+                    social_score = calculate_social_score(token)
 
                     if social_score < 18:
                         continue
 
                     logger.info(
                         f"🚀 ALPHA DETECTED | "
-                        f"{token_address[:8]} | "
+                        f"{token[:8]} | "
                         f"SOCIAL={social_score}"
                     )
 
-                    recent_tokens.append(token_address)
+                    recent_tokens.append(token)
 
-                    if len(recent_tokens) > 20:
+                    if len(recent_tokens) > 25:
                         recent_tokens.pop(0)
 
-                    if len(active_trades) >= MAX_ACTIVE_TRADES:
-                        continue
+                    if token not in active_trades:
 
-                    if token_address not in active_trades:
-
-                        active_trades[token_address] = {
-                            "entry_price": random.uniform(0.0001, 0.001),
-                            "size": round(random.uniform(0.1, 0.3), 3),
-                            "time": datetime.utcnow().isoformat(),
+                        active_trades[token] = {
+                            "entry_price": round(
+                                random.uniform(
+                                    0.0001,
+                                    0.001
+                                ),
+                                6
+                            ),
+                            "size": round(
+                                random.uniform(
+                                    0.1,
+                                    0.3
+                                ),
+                                3
+                            ),
+                            "time": datetime.utcnow().isoformat()
                         }
+
+                        trade = active_trades[token]
+
+                        cursor.execute("""
+                        INSERT INTO trades
+                        VALUES (?, ?, ?, ?, ?)
+                        """, (
+                            token,
+                            social_score,
+                            trade["entry_price"],
+                            trade["size"],
+                            datetime.utcnow().isoformat()
+                        ))
+
+                        conn.commit()
 
                         logger.info(
                             f"🔥 SAFE MODE BUY | "
-                            f"{token_address[:8]}"
+                            f"{token[:8]}"
                         )
 
                         try:
 
                             await app.bot.send_message(
-                                chat_id=os.getenv("TELEGRAM_CHAT_ID"),
+                                chat_id=CHAT_ID,
                                 text=(
                                     f"🔥 SAFE MODE BUY\n\n"
-                                    f"Token: {token_address}\n"
-                                    f"Social Score: {social_score}"
+                                    f"Token: {token}\n"
+                                    f"Social Score: {social_score}\n"
+                                    f"Liquidity: ${liquidity:,.0f}\n"
+                                    f"Volume: ${volume:,.0f}"
                                 )
                             )
 
                         except Exception as e:
-                            logger.error(f"TG SEND ERROR: {e}")
+
+                            logger.error(
+                                f"TG SEND ERROR: {e}"
+                            )
 
                 except Exception as e:
 
-                    logger.error(f"PAIR ERROR: {e}")
+                    logger.error(
+                        f"PAIR ERROR: {e}"
+                    )
 
             await asyncio.sleep(20)
 
         except Exception as e:
 
-            logger.error(f"SCANNER LOOP ERROR: {e}")
-
-            await asyncio.sleep(10)
-
-# =========================================
-# TG SCANNER
-# =========================================
-
-@tg_client.on(events.NewMessage)
-async def tg_message_handler(event):
-
-    try:
-
-        group_name = getattr(event.chat, "title", "UNKNOWN")
-
-        if TARGET_GROUPS:
-
-            matched = False
-
-            for group in TARGET_GROUPS:
-
-                if group.lower() in group_name.lower():
-                    matched = True
-                    break
-
-            if not matched:
-                return
-
-        message = event.raw_text
-
-        matches = re.findall(TOKEN_REGEX, message)
-
-        if not matches:
-            return
-
-        for token in matches:
-
-            mention_cache[token] = mention_cache.get(token, 0) + 1
-
-            logger.info(
-                f"TG MENTION | "
-                f"{token[:8]} | "
-                f"{group_name}"
+            logger.error(
+                f"SCANNER LOOP ERROR: {e}"
             )
 
-            recent_mentions.append({
-                "token": token,
-                "group": group_name,
-                "time": datetime.utcnow().isoformat()
-            })
-
-            if len(recent_mentions) > 50:
-                recent_mentions.pop(0)
-
-    except Exception as e:
-
-        logger.error(f"TG SCANNER ERROR: {e}")
+            await asyncio.sleep(10)
 
 # =========================================
 # MAIN
@@ -394,13 +611,35 @@ async def main():
 
     # COMMANDS
 
-    app.add_handler(CommandHandler("status", status_command))
-    app.add_handler(CommandHandler("positions", positions_command))
-    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(
+        CommandHandler("help", help_command)
+    )
+
+    app.add_handler(
+        CommandHandler("status", status_command)
+    )
+
+    app.add_handler(
+        CommandHandler("positions", positions_command)
+    )
+
+    app.add_handler(
+        CommandHandler("stats", stats_command)
+    )
+
+    app.add_handler(
+        CommandHandler("recent", recent_command)
+    )
+
+    app.add_handler(
+        CommandHandler("groups", groups_command)
+    )
 
     # CLEAR WEBHOOK
 
-    await app.bot.delete_webhook(drop_pending_updates=True)
+    await app.bot.delete_webhook(
+        drop_pending_updates=True
+    )
 
     # START TELETHON
 
@@ -408,7 +647,10 @@ async def main():
 
     if not await tg_client.is_user_authorized():
 
-        logger.error("TG SESSION NOT AUTHORIZED")
+        logger.error(
+            "TG SESSION NOT AUTHORIZED"
+        )
+
         return
 
     logger.info("✅ TG SCANNER ACTIVE")
@@ -416,6 +658,7 @@ async def main():
     # START APP
 
     await app.initialize()
+
     await app.start()
 
     # START POLLING
@@ -427,13 +670,16 @@ async def main():
 
     logger.info("✅ COMMAND SYSTEM ACTIVE")
 
-    # BACKGROUND TASKS
+    # START BACKGROUND TASK
 
-    asyncio.create_task(scanner_loop(app))
+    asyncio.create_task(
+        scanner_loop(app)
+    )
 
     # KEEP ALIVE
 
     while True:
+
         await asyncio.sleep(60)
 
 # =========================================
