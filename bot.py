@@ -1,12 +1,18 @@
+# =========================================================
+# SAFE MODE V4 PROFESSIONAL ULTRA
+# TG + X + SMART WALLET + AI SCORE + ANTI RUG
+# PAPER TRADE ONLY
+# OVERWRITE READY
+# =========================================================
+
 import asyncio
 import aiohttp
 import logging
 import os
 import re
 import time
+import sqlite3
 from datetime import datetime
-
-from telethon import TelegramClient, events
 
 from telegram import Update
 from telegram.ext import (
@@ -15,47 +21,52 @@ from telegram.ext import (
     ContextTypes,
 )
 
+from telethon import TelegramClient, events
+
 # =========================================================
-# ENV
+# CONFIG
 # =========================================================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID")
 
-API_ID = int(os.getenv("API_ID"))
-API_HASH = os.getenv("API_HASH")
+API_ID = 31204558
+API_HASH = "a9b21092d21b1d5892e9f0118045dac2"
+
+TG_SESSION = "safe_mode_scanner"
 
 # =========================================================
 # SAFE MODE SETTINGS
 # =========================================================
 
-MIN_LIQUIDITY = 2500
-MAX_LIQUIDITY = 12000
+MIN_LIQUIDITY = 3500
+MAX_LIQUIDITY = 25000
 
-MIN_VOLUME_24H = 2500
-MIN_VOLUME_PER_BUY = 180
-MIN_BUYS = 22
+MIN_VOLUME_24H = 4000
+MIN_VOLUME_5M = 500
 
-MAX_SELL_RATIO = 1.05
-MIN_BUY_DOMINANCE = 1.08
+MIN_BUYS_24H = 30
+MIN_BUYS_5M = 6
 
-MAX_TOKEN_AGE_MINUTES = 20
+MAX_SELL_RATIO = 0.95
+MIN_BUY_DOMINANCE = 1.15
+
+MIN_VOLUME_PER_BUY = 200
+
+MAX_TOKEN_AGE_MINUTES = 35
 
 MAX_ACTIVE_TRADES = 2
 
-TAKE_PROFIT = 0.25
+TAKE_PROFIT = 0.30
 STOP_LOSS = 0.12
 
-TRAILING_STOP_ENABLED = True
-TRAILING_TRIGGER = 0.15
-TRAILING_GAP = 0.10
-
-SCAN_INTERVAL = 45
+TRAILING_STOP_TRIGGER = 0.20
+TRAILING_STOP_GAP = 0.10
 
 AUTO_PAUSE_AFTER_LOSSES = 3
-PAUSE_MINUTES = 45
+AUTO_PAUSE_MINUTES = 60
 
-SOCIAL_SCORE_THRESHOLD = 4
+FINAL_SCORE_THRESHOLD = 80
 
 # =========================================================
 # TG GROUPS
@@ -70,45 +81,102 @@ TARGET_GROUPS = [
 ]
 
 GROUP_WEIGHTS = {
-    "Fire Dragon Alpha": 3,
-    "Chigga's Gambles": 2,
-    "Gambler's Lounge": 2,
-    "XXYY MEME Group": 1,
-    "Crypto Tribe": 2,
+    "Fire Dragon Alpha": 5,
+    "Chigga's Gambles": 4,
+    "Gambler's Lounge": 3,
+    "XXYY MEME Group": 2,
+    "Crypto Tribe": 3,
 }
 
 # =========================================================
-# GLOBALS
+# X HEAT
 # =========================================================
 
-paper_balance = 0.5
+X_HEAT_KEYWORDS = [
+    "100x",
+    "moon",
+    "runner",
+    "gem",
+    "viral",
+    "cto",
+    "pump",
+    "ai",
+    "early",
+    "alpha",
+    "send",
+    "next",
+]
 
-active_trades = {}
-trade_history = []
+# =========================================================
+# SMART WALLET TRACKING
+# =========================================================
 
-recent_tokens = set()
-
-loss_streak = 0
-pause_until = 0
-
-mention_cache = {}
-x_heat_cache = {}
+SMART_WALLET_KEYWORDS = [
+    "smart money",
+    "ape",
+    "loaded",
+    "whale",
+    "alpha",
+    "early",
+]
 
 # =========================================================
 # LOGGING
 # =========================================================
 
 logging.basicConfig(
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    level=logging.INFO
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
 # =========================================================
-# TELETHON CLIENT
+# SQLITE DATABASE
+# =========================================================
+
+conn = sqlite3.connect(
+    "safe_mode_v4.db"
+)
+
+cursor = conn.cursor()
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS trades (
+    token TEXT,
+    entry REAL,
+    exit REAL,
+    pnl REAL,
+    result TEXT,
+    created_at TEXT
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS blacklist (
+    token TEXT
+)
+""")
+
+conn.commit()
+
+# =========================================================
+# GLOBALS
+# =========================================================
+
+active_trades = {}
+
+mention_cache = {}
+recent_tokens = set()
+
+trade_history = []
+
+paused_until = 0
+
+# =========================================================
+# TG CLIENT
 # =========================================================
 
 tg_client = TelegramClient(
-    "safe_mode_scanner",
+    TG_SESSION,
     API_ID,
     API_HASH
 )
@@ -117,22 +185,44 @@ tg_client = TelegramClient(
 # TOKEN REGEX
 # =========================================================
 
-SOLANA_REGEX = r"\b[A-Za-z0-9]{32,44}\b"
+TOKEN_REGEX = r"\b[A-Za-z0-9]{32,44}\b"
+
+# =========================================================
+# HELPERS
+# =========================================================
+
+def is_paused():
+    return time.time() < paused_until
+
+def extract_tokens(text):
+    return re.findall(TOKEN_REGEX, text)
+
+def sell_ratio(buys, sells):
+    if buys <= 0:
+        return 999
+    return sells / buys
+
+def buy_dominance(buys, sells):
+    if sells <= 0:
+        return buys
+    return buys / sells
 
 # =========================================================
 # TELEGRAM ALERT
 # =========================================================
 
-async def send_telegram_message(text):
+async def send_alert(message):
 
     try:
 
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        url = (
+            f"https://api.telegram.org/bot"
+            f"{BOT_TOKEN}/sendMessage"
+        )
 
         payload = {
             "chat_id": TG_CHAT_ID,
-            "text": text,
-            "parse_mode": "HTML"
+            "text": message,
         }
 
         async with aiohttp.ClientSession() as session:
@@ -140,25 +230,161 @@ async def send_telegram_message(text):
             async with session.post(
                 url,
                 json=payload
-            ) as response:
-
-                await response.text()
+            ):
+                pass
 
     except Exception as e:
-        logging.error(f"Telegram send error: {e}")
+        logging.error(f"alert error: {e}")
 
 # =========================================================
-# DEX FETCH
+# TG SCANNER
 # =========================================================
 
-async def fetch_pair_data(token_address):
-
-    url = (
-        f"https://api.dexscreener.com/latest/dex/tokens/"
-        f"{token_address}"
-    )
+@tg_client.on(events.NewMessage)
+async def tg_scanner(event):
 
     try:
+
+        group_name = getattr(
+            event.chat,
+            "title",
+            "Unknown"
+        )
+
+        matched = False
+
+        for g in TARGET_GROUPS:
+
+            if g.lower() in group_name.lower():
+                matched = True
+                break
+
+        if not matched:
+            return
+
+        text = event.raw_text
+
+        tokens = extract_tokens(text)
+
+        if not tokens:
+            return
+
+        for token in tokens:
+
+            if token not in mention_cache:
+
+                mention_cache[token] = {
+                    "mentions": 0,
+                    "groups": set(),
+                    "smart_wallet": 0,
+                    "ai_score": 0,
+                    "last_seen": time.time(),
+                }
+
+            mention_cache[token]["mentions"] += 1
+
+            mention_cache[token]["groups"].add(
+                group_name
+            )
+
+            mention_cache[token]["last_seen"] = (
+                time.time()
+            )
+
+            # SMART WALLET DETECT
+
+            lowered = text.lower()
+
+            for kw in SMART_WALLET_KEYWORDS:
+
+                if kw in lowered:
+
+                    mention_cache[token][
+                        "smart_wallet"
+                    ] += 5
+
+            # AI SENTIMENT SCORE
+
+            positive_words = [
+                "strong",
+                "bullish",
+                "runner",
+                "early",
+                "send",
+                "moon",
+                "alpha",
+                "good",
+            ]
+
+            for p in positive_words:
+
+                if p in lowered:
+                    mention_cache[token][
+                        "ai_score"
+                    ] += 2
+
+            logging.info(
+                f"TG MENTION | "
+                f"{token} | "
+                f"{group_name}"
+            )
+
+    except Exception as e:
+        logging.error(f"tg_scanner error: {e}")
+
+# =========================================================
+# SOCIAL SCORE
+# =========================================================
+
+def social_score(token):
+
+    data = mention_cache.get(token)
+
+    if not data:
+        return 0
+
+    score = 0
+
+    score += data["mentions"] * 4
+
+    for g in data["groups"]:
+        score += GROUP_WEIGHTS.get(g, 1)
+
+    score += data["smart_wallet"]
+
+    score += data["ai_score"]
+
+    return score
+
+# =========================================================
+# X HEAT
+# =========================================================
+
+def x_heat(symbol, name):
+
+    text = f"{symbol} {name}".lower()
+
+    score = 0
+
+    for kw in X_HEAT_KEYWORDS:
+
+        if kw in text:
+            score += 3
+
+    return score
+
+# =========================================================
+# FETCH PAIR
+# =========================================================
+
+async def fetch_pair(token):
+
+    try:
+
+        url = (
+            f"https://api.dexscreener.com/"
+            f"latest/dex/tokens/{token}"
+        )
 
         async with aiohttp.ClientSession() as session:
 
@@ -166,6 +392,9 @@ async def fetch_pair_data(token_address):
                 url,
                 timeout=20
             ) as response:
+
+                if response.status != 200:
+                    return None
 
                 data = await response.json()
 
@@ -182,48 +411,38 @@ async def fetch_pair_data(token_address):
                 if not sol_pairs:
                     return None
 
-                best_pair = max(
+                best = max(
                     sol_pairs,
                     key=lambda x: float(
-                        x.get("liquidity", {}).get("usd", 0)
+                        x.get(
+                            "liquidity",
+                            {}
+                        ).get("usd", 0)
                     )
                 )
 
-                return best_pair
+                return best
 
     except Exception as e:
-        logging.error(f"Dex fetch error: {e}")
-        return None
+        logging.error(f"fetch_pair error: {e}")
+
+    return None
 
 # =========================================================
-# SAFE FILTER
+# RUG CHECK
 # =========================================================
 
-def token_passes_filters(pair):
+def anti_rug(pair):
 
     try:
 
         liquidity = float(
-            pair.get("liquidity", {}).get("usd", 0)
+            pair["liquidity"]["usd"]
         )
 
-        volume_24h = float(
-            pair.get("volume", {}).get("h24", 0)
+        fdv = float(
+            pair.get("fdv", 0)
         )
-
-        txns = pair.get("txns", {}).get("h24", {})
-
-        buys = int(txns.get("buys", 0))
-        sells = int(txns.get("sells", 0))
-
-        pair_created = pair.get("pairCreatedAt")
-
-        if not pair_created:
-            return False
-
-        age_minutes = (
-            time.time() - (pair_created / 1000)
-        ) / 60
 
         if liquidity < MIN_LIQUIDITY:
             return False
@@ -231,26 +450,137 @@ def token_passes_filters(pair):
         if liquidity > MAX_LIQUIDITY:
             return False
 
-        if volume_24h < MIN_VOLUME_24H:
+        if fdv > 5000000:
             return False
 
-        if buys < MIN_BUYS:
+        return True
+
+    except:
+        return False
+
+# =========================================================
+# MOMENTUM SCORE
+# =========================================================
+
+def momentum_score(pair):
+
+    try:
+
+        volume24 = float(
+            pair["volume"]["h24"]
+        )
+
+        volume5 = float(
+            pair["volume"]["m5"]
+        )
+
+        buys24 = int(
+            pair["txns"]["h24"]["buys"]
+        )
+
+        sells24 = int(
+            pair["txns"]["h24"]["sells"]
+        )
+
+        buys5 = int(
+            pair["txns"]["m5"]["buys"]
+        )
+
+        dominance = buy_dominance(
+            buys24,
+            sells24
+        )
+
+        score = 0
+
+        score += min(volume24 / 1000, 25)
+
+        score += min(volume5 / 50, 25)
+
+        score += min(buys24 / 4, 20)
+
+        score += min(buys5 * 2, 15)
+
+        score += min(dominance * 10, 15)
+
+        return round(score, 2)
+
+    except:
+        return 0
+
+# =========================================================
+# FILTERS
+# =========================================================
+
+def passes_filters(pair):
+
+    try:
+
+        liquidity = float(
+            pair["liquidity"]["usd"]
+        )
+
+        volume24 = float(
+            pair["volume"]["h24"]
+        )
+
+        volume5 = float(
+            pair["volume"]["m5"]
+        )
+
+        buys24 = int(
+            pair["txns"]["h24"]["buys"]
+        )
+
+        buys5 = int(
+            pair["txns"]["m5"]["buys"]
+        )
+
+        sells24 = int(
+            pair["txns"]["h24"]["sells"]
+        )
+
+        created = pair.get(
+            "pairCreatedAt",
+            0
+        )
+
+        age_minutes = (
+            time.time() -
+            (created / 1000)
+        ) / 60
+
+        ratio = sell_ratio(
+            buys24,
+            sells24
+        )
+
+        dominance = buy_dominance(
+            buys24,
+            sells24
+        )
+
+        volume_per_buy = (
+            volume24 / max(buys24, 1)
+        )
+
+        if volume24 < MIN_VOLUME_24H:
             return False
 
-        if sells <= 0:
-            sells = 1
-
-        sell_ratio = sells / buys
-
-        if sell_ratio > MAX_SELL_RATIO:
+        if volume5 < MIN_VOLUME_5M:
             return False
 
-        buy_dominance = buys / sells
-
-        if buy_dominance < MIN_BUY_DOMINANCE:
+        if buys24 < MIN_BUYS_24H:
             return False
 
-        volume_per_buy = volume_24h / buys
+        if buys5 < MIN_BUYS_5M:
+            return False
+
+        if ratio > MAX_SELL_RATIO:
+            return False
+
+        if dominance < MIN_BUY_DOMINANCE:
+            return False
 
         if volume_per_buy < MIN_VOLUME_PER_BUY:
             return False
@@ -264,380 +594,342 @@ def token_passes_filters(pair):
         return False
 
 # =========================================================
-# X HEAT SCORE
+# DYNAMIC POSITION SCORE
 # =========================================================
 
-def calculate_x_heat(symbol, name):
+def dynamic_position_size(score):
 
-    score = 0
+    if score >= 120:
+        return 1.5
 
-    bullish_keywords = [
-        "launch",
-        "moon",
-        "ai",
-        "100x",
-        "gem",
-        "trending",
-        "viral",
-    ]
+    if score >= 100:
+        return 1.2
 
-    text = f"{symbol} {name}".lower()
-
-    for word in bullish_keywords:
-
-        if word in text:
-            score += 1
-
-    return score
-
-# =========================================================
-# SOCIAL SCORE
-# =========================================================
-
-def calculate_social_score(token_address):
-
-    data = mention_cache.get(token_address)
-
-    if not data:
-        return 0
-
-    groups = data["groups"]
-
-    score = 0
-
-    for g in groups:
-        score += GROUP_WEIGHTS.get(g, 1)
-
-    score += data["mentions"]
-
-    return score
+    return 1.0
 
 # =========================================================
 # PAPER BUY
 # =========================================================
 
-async def paper_buy(pair, social_score):
+async def paper_buy(pair, final_score):
 
-    global active_trades
+    token = pair["baseToken"]["symbol"]
+    address = pair["baseToken"]["address"]
+
+    if address in active_trades:
+        return
 
     if len(active_trades) >= MAX_ACTIVE_TRADES:
         return
 
-    token_address = pair.get(
-        "baseToken",
-        {}
-    ).get("address")
+    entry = float(pair["priceUsd"])
 
-    if token_address in active_trades:
-        return
-
-    symbol = pair.get(
-        "baseToken",
-        {}
-    ).get("symbol", "UNKNOWN")
-
-    name = pair.get(
-        "baseToken",
-        {}
-    ).get("name", "UNKNOWN")
-
-    entry_price = float(
-        pair.get("priceUsd", 0)
+    position_size = dynamic_position_size(
+        final_score
     )
 
-    active_trades[token_address] = {
-        "symbol": symbol,
-        "name": name,
-        "entry_price": entry_price,
-        "highest_price": entry_price,
-        "buy_time": datetime.utcnow(),
+    active_trades[address] = {
+        "token": token,
+        "entry": entry,
+        "highest": entry,
+        "size": position_size,
+        "buy_time": time.time(),
     }
 
-    await send_telegram_message(
-        f"🟢 <b>SAFE MODE BUY</b>\n\n"
-        f"Name: {name}\n"
-        f"Symbol: {symbol}\n"
-        f"Social Score: {social_score}\n"
-        f"Price: ${entry_price:.8f}"
+    await send_alert(
+        f"🔥 SAFE MODE V4 BUY\n\n"
+        f"{token}\n"
+        f"Score: {final_score}\n"
+        f"Size: {position_size}x\n"
+        f"Entry: ${entry}"
     )
 
 # =========================================================
-# MONITOR TRADES
+# SAVE TRADE
 # =========================================================
 
-async def monitor_trades():
+def save_trade(
+    token,
+    entry,
+    exit_price,
+    pnl,
+    result
+):
 
-    global active_trades
-    global trade_history
-    global loss_streak
-    global pause_until
-
-    remove_list = []
-
-    for token_address, trade in active_trades.items():
-
-        pair = await fetch_pair_data(token_address)
-
-        if not pair:
-            continue
-
-        current_price = float(
-            pair.get("priceUsd", 0)
+    cursor.execute(
+        """
+        INSERT INTO trades
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            token,
+            entry,
+            exit_price,
+            pnl,
+            result,
+            str(datetime.utcnow())
         )
+    )
 
-        entry_price = trade["entry_price"]
-
-        pnl = (
-            current_price - entry_price
-        ) / entry_price
-
-        if current_price > trade["highest_price"]:
-            trade["highest_price"] = current_price
-
-        # TAKE PROFIT
-
-        if pnl >= TAKE_PROFIT:
-
-            trade_history.append(pnl)
-
-            remove_list.append(token_address)
-
-            loss_streak = 0
-
-            await send_telegram_message(
-                f"🎯 TAKE PROFIT\n\n"
-                f"{trade['symbol']}\n"
-                f"PNL: +{pnl*100:.2f}%"
-            )
-
-            continue
-
-        # STOP LOSS
-
-        if pnl <= -STOP_LOSS:
-
-            trade_history.append(pnl)
-
-            remove_list.append(token_address)
-
-            loss_streak += 1
-
-            await send_telegram_message(
-                f"🔴 STOP LOSS\n\n"
-                f"{trade['symbol']}\n"
-                f"PNL: {pnl*100:.2f}%"
-            )
-
-            continue
-
-        # TRAILING STOP
-
-        if TRAILING_STOP_ENABLED:
-
-            highest = trade["highest_price"]
-
-            gain_from_entry = (
-                highest - entry_price
-            ) / entry_price
-
-            pullback = (
-                highest - current_price
-            ) / highest
-
-            if (
-                gain_from_entry >= TRAILING_TRIGGER
-                and pullback >= TRAILING_GAP
-            ):
-
-                trade_history.append(pnl)
-
-                remove_list.append(token_address)
-
-                await send_telegram_message(
-                    f"📉 TRAILING STOP\n\n"
-                    f"{trade['symbol']}\n"
-                    f"PNL: {pnl*100:.2f}%"
-                )
-
-    for token in remove_list:
-        active_trades.pop(token, None)
-
-    # AUTO PAUSE
-
-    if loss_streak >= AUTO_PAUSE_AFTER_LOSSES:
-
-        pause_until = (
-            time.time() +
-            (PAUSE_MINUTES * 60)
-        )
-
-        loss_streak = 0
-
-        await send_telegram_message(
-            f"⏸ AUTO PAUSE\n\n"
-            f"Paused for {PAUSE_MINUTES} mins"
-        )
+    conn.commit()
 
 # =========================================================
-# TG SCANNER
+# MANAGE TRADES
 # =========================================================
 
-@tg_client.on(events.NewMessage)
-async def handler(event):
+async def manage_trades():
 
-    try:
-
-        chat = await event.get_chat()
-
-        group_name = getattr(chat, "title", "")
-
-        if group_name not in TARGET_GROUPS:
-            return
-
-        text = event.raw_text
-
-        matches = re.findall(
-            SOLANA_REGEX,
-            text
-        )
-
-        if not matches:
-            return
-
-        for token_address in matches:
-
-            if token_address not in mention_cache:
-
-                mention_cache[token_address] = {
-                    "mentions": 0,
-                    "groups": set(),
-                    "last_seen": time.time()
-                }
-
-            mention_cache[token_address]["mentions"] += 1
-
-            mention_cache[token_address]["groups"].add(
-                group_name
-            )
-
-            logging.info(
-                f"Mention detected "
-                f"{token_address} "
-                f"in {group_name}"
-            )
-
-    except Exception as e:
-        logging.error(f"TG scanner error: {e}")
-
-# =========================================================
-# MAIN SOCIAL LOOP
-# =========================================================
-
-async def social_scanner_loop():
-
-    global recent_tokens
+    global paused_until
 
     while True:
 
         try:
 
-            if time.time() < pause_until:
+            remove = []
 
-                await asyncio.sleep(60)
-                continue
+            for address, trade in active_trades.items():
 
-            for token_address, data in list(
-                mention_cache.items()
-            ):
-
-                if token_address in recent_tokens:
-                    continue
-
-                social_score = calculate_social_score(
-                    token_address
-                )
-
-                if social_score < SOCIAL_SCORE_THRESHOLD:
-                    continue
-
-                pair = await fetch_pair_data(
-                    token_address
-                )
+                pair = await fetch_pair(address)
 
                 if not pair:
                     continue
 
-                if not token_passes_filters(pair):
+                current = float(
+                    pair["priceUsd"]
+                )
+
+                entry = trade["entry"]
+
+                pnl = (
+                    current - entry
+                ) / entry
+
+                if current > trade["highest"]:
+                    trade["highest"] = current
+
+                pullback = (
+                    trade["highest"] - current
+                ) / trade["highest"]
+
+                if pnl >= TAKE_PROFIT:
+
+                    await send_alert(
+                        f"🎯 TAKE PROFIT\n\n"
+                        f"{trade['token']}\n"
+                        f"PNL: {round(pnl*100,2)}%"
+                    )
+
+                    save_trade(
+                        trade["token"],
+                        entry,
+                        current,
+                        pnl,
+                        "TP"
+                    )
+
+                    trade_history.append(1)
+
+                    remove.append(address)
+
                     continue
 
-                symbol = pair.get(
-                    "baseToken",
-                    {}
-                ).get("symbol", "")
+                if pnl <= -STOP_LOSS:
 
-                name = pair.get(
-                    "baseToken",
-                    {}
-                ).get("name", "")
+                    await send_alert(
+                        f"🔴 STOP LOSS\n\n"
+                        f"{trade['token']}\n"
+                        f"PNL: {round(pnl*100,2)}%"
+                    )
 
-                x_heat = calculate_x_heat(
+                    save_trade(
+                        trade["token"],
+                        entry,
+                        current,
+                        pnl,
+                        "SL"
+                    )
+
+                    trade_history.append(-1)
+
+                    remove.append(address)
+
+                    continue
+
+                if (
+                    pnl >= TRAILING_STOP_TRIGGER and
+                    pullback >= TRAILING_STOP_GAP
+                ):
+
+                    await send_alert(
+                        f"📉 TRAILING STOP\n\n"
+                        f"{trade['token']}\n"
+                        f"PNL: {round(pnl*100,2)}%"
+                    )
+
+                    save_trade(
+                        trade["token"],
+                        entry,
+                        current,
+                        pnl,
+                        "TRAIL"
+                    )
+
+                    trade_history.append(1)
+
+                    remove.append(address)
+
+            for r in remove:
+                active_trades.pop(r, None)
+
+            recent = trade_history[
+                -AUTO_PAUSE_AFTER_LOSSES:
+            ]
+
+            if (
+                len(recent) >=
+                AUTO_PAUSE_AFTER_LOSSES and
+                all(x == -1 for x in recent)
+            ):
+
+                paused_until = (
+                    time.time() +
+                    AUTO_PAUSE_MINUTES * 60
+                )
+
+                await send_alert(
+                    f"⏸ AUTO PAUSE\n\n"
+                    f"{AUTO_PAUSE_MINUTES} mins"
+                )
+
+            await asyncio.sleep(20)
+
+        except Exception as e:
+            logging.error(f"manage error: {e}")
+
+            await asyncio.sleep(10)
+
+# =========================================================
+# MAIN LOOP
+# =========================================================
+
+async def scanner_loop():
+
+    while True:
+
+        try:
+
+            if is_paused():
+
+                logging.warning(
+                    "BOT PAUSED"
+                )
+
+                await asyncio.sleep(30)
+
+                continue
+
+            for token in list(
+                mention_cache.keys()
+            ):
+
+                if token in recent_tokens:
+                    continue
+
+                pair = await fetch_pair(token)
+
+                if not pair:
+                    continue
+
+                if not anti_rug(pair):
+                    continue
+
+                if not passes_filters(pair):
+                    continue
+
+                symbol = pair[
+                    "baseToken"
+                ].get("symbol", "")
+
+                name = pair[
+                    "baseToken"
+                ].get("name", "")
+
+                social = social_score(token)
+
+                xscore = x_heat(
                     symbol,
                     name
                 )
 
-                final_score = social_score + x_heat
-
-                logging.info(
-                    f"FINAL SCORE {symbol}: "
-                    f"{final_score}"
+                momentum = momentum_score(
+                    pair
                 )
 
-                if final_score >= 5:
+                final = (
+                    social +
+                    xscore +
+                    momentum
+                )
 
-                    recent_tokens.add(token_address)
+                logging.info(
+                    f"PASS | "
+                    f"{symbol} | "
+                    f"Social={social} | "
+                    f"X={xscore} | "
+                    f"Momentum={momentum} | "
+                    f"Final={final}"
+                )
 
-                    await send_telegram_message(
-                        f"🔥 <b>ALPHA DETECTED</b>\n\n"
-                        f"{name} ({symbol})\n"
-                        f"Social Score: {social_score}\n"
-                        f"X Heat: {x_heat}\n"
-                        f"Final Score: {final_score}"
+                if final >= FINAL_SCORE_THRESHOLD:
+
+                    recent_tokens.add(token)
+
+                    await send_alert(
+                        f"🚀 ALPHA DETECTED\n\n"
+                        f"{symbol}\n"
+                        f"Social: {social}\n"
+                        f"X Heat: {xscore}\n"
+                        f"Momentum: {momentum}\n"
+                        f"Final: {final}"
                     )
 
                     await paper_buy(
                         pair,
-                        final_score
+                        final
                     )
 
-            await monitor_trades()
+            await asyncio.sleep(15)
 
         except Exception as e:
-            logging.error(f"Social loop error: {e}")
+            logging.error(
+                f"scanner_loop error: {e}"
+            )
 
-        await asyncio.sleep(SCAN_INTERVAL)
+            await asyncio.sleep(10)
 
 # =========================================================
 # COMMANDS
 # =========================================================
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def status(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
-    await update.message.reply_text(
-        "✅ SAFE MODE V2 RUNNING"
+    msg = (
+        f"SAFE MODE V4 ULTRA\n\n"
+        f"Trades: {len(active_trades)}\n"
+        f"Mentions: {len(mention_cache)}\n"
+        f"Recent: {len(recent_tokens)}\n"
+        f"Paused: {is_paused()}"
     )
 
-async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(msg)
 
-    text = (
-        f"Active Trades: {len(active_trades)}\n"
-        f"Tracked Tokens: {len(mention_cache)}\n"
-        f"Recent Tokens: {len(recent_tokens)}\n"
-        f"Trade History: {len(trade_history)}"
-    )
-
-    await update.message.reply_text(text)
-
-async def trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def positions(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
     if not active_trades:
 
@@ -647,22 +939,29 @@ async def trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
-    msg = "📊 ACTIVE TRADES\n\n"
+    text = "📊 ACTIVE TRADES\n\n"
 
     for trade in active_trades.values():
 
-        msg += (
-            f"{trade['symbol']}\n"
-            f"Entry: ${trade['entry_price']:.8f}\n\n"
+        text += (
+            f"{trade['token']}\n"
+            f"Entry: {trade['entry']}\n"
+            f"Size: {trade['size']}x\n\n"
         )
 
-    await update.message.reply_text(msg)
+    await update.message.reply_text(text)
 
 # =========================================================
 # MAIN
 # =========================================================
 
 async def main():
+
+    logging.info(
+        "STARTING SAFE MODE V4 ULTRA"
+    )
+
+    await tg_client.connect()
 
     app = (
         Application.builder()
@@ -671,34 +970,45 @@ async def main():
     )
 
     app.add_handler(
-        CommandHandler("start", start)
+        CommandHandler(
+            "status",
+            status
+        )
     )
 
     app.add_handler(
-        CommandHandler("status", status)
-    )
-
-    app.add_handler(
-        CommandHandler("trades", trades)
+        CommandHandler(
+            "positions",
+            positions
+        )
     )
 
     asyncio.create_task(
-        social_scanner_loop()
+        scanner_loop()
     )
-
-    await tg_client.start()
-
-    logging.info("TG scanner connected")
 
     asyncio.create_task(
-        tg_client.run_until_disconnected()
+        manage_trades()
     )
 
-    logging.info("SAFE MODE V2 STARTED")
+    logging.info(
+        "TG SCANNER ACTIVE"
+    )
 
-    await app.run_polling(
+    await app.initialize()
+
+    await app.start()
+
+    await app.updater.start_polling(
         drop_pending_updates=True
     )
+
+    while True:
+        await asyncio.sleep(3600)
+
+# =========================================================
+# RUN
+# =========================================================
 
 if __name__ == "__main__":
     asyncio.run(main())
