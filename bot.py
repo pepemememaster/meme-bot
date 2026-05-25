@@ -1,6 +1,6 @@
 # =========================================
-# SAFE MODE V7
-# HYBRID PUMPFUN + DEX + TG SCANNER
+# SAFE MODE V7.1
+# QUALITY FILTER HOTFIX
 # =========================================
 import asyncio
 import logging
@@ -31,13 +31,13 @@ SESSION_NAME = "safe_mode_scanner"
 # SAFE ENGINE SETTINGS
 # =========================================
 MIN_LIQUIDITY = 4000
-MAX_LIQUIDITY = 150000
+MAX_LIQUIDITY = 250000
 MIN_VOLUME_24H = 1200
 MIN_BUYS = 10
 MIN_VOLUME_PER_BUY = 70
 MAX_SELL_RATIO = 1.15
 MIN_BUY_DOMINANCE = 1.01
-MAX_TOKEN_AGE_MINUTES = 45
+MAX_TOKEN_AGE_MINUTES = 60
 MAX_ACTIVE_TRADES = 3
 # =========================================
 # EARLY ENGINE SETTINGS
@@ -47,6 +47,10 @@ EARLY_MIN_VOLUME = 600
 EARLY_MIN_BUYS = 3
 EARLY_ALERT_SCORE = 10
 SAFE_BUY_SCORE = 18
+# =========================================
+# MOMENTUM QUALITY
+# =========================================
+MIN_VOLUME_GROWTH = 1.25
 # =========================================
 # RISK
 # =========================================
@@ -136,7 +140,7 @@ tg_client = TelegramClient(
 # =========================================
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = """
-🤖 SAFE MODE V7
+🤖 SAFE MODE V7.1
 /status
 /positions
 /stats
@@ -148,7 +152,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================================
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = f"""
-🚀 SAFE MODE V7
+🚀 SAFE MODE V7.1
 Active Trades: {len(active_trades)}
 Recent Mentions: {len(recent_mentions)}
 Recent Tokens: {len(recent_tokens)}
@@ -454,6 +458,9 @@ async def scanner_loop(app):
                             {}
                         ).get("usd", 0)
                     )
+                    # 避免超大型成熟盤
+                    if liquidity > MAX_LIQUIDITY:
+                        continue
                     volume = float(
                         pair_data.get(
                             "volume",
@@ -474,25 +481,55 @@ async def scanner_loop(app):
                         "h24",
                         {}
                     ).get("sells", 0)
+                    # TOKEN AGE
+                    pair_created_at = pair_data.get(
+                        "pairCreatedAt",
+                        0
+                    )
+                    if pair_created_at:
+                        age_minutes = (
+                            (
+                                time.time() * 1000
+                                - pair_created_at
+                            )
+                            / 60000
+                        )
+                        if (
+                            age_minutes
+                            > MAX_TOKEN_AGE_MINUTES
+                        ):
+                            continue
+                    volume_growth = (
+                        calculate_volume_acceleration(
+                            token,
+                            volume
+                        )
+                    )
+                    # 必須真的有 momentum
+                    if (
+                        volume_growth
+                        < MIN_VOLUME_GROWTH
+                    ):
+                        continue
                     volume_per_buy = (
                         volume / max(buys, 1)
                     )
-                    if volume_per_buy < MIN_VOLUME_PER_BUY:
+                    if (
+                        volume_per_buy
+                        < MIN_VOLUME_PER_BUY
+                    ):
                         continue
                     # =====================================
                     # EARLY ENGINE
                     # =====================================
                     if (
-                        liquidity >= EARLY_MIN_LIQUIDITY
-                        and volume >= EARLY_MIN_VOLUME
-                        and buys >= EARLY_MIN_BUYS
+                        liquidity
+                        >= EARLY_MIN_LIQUIDITY
+                        and volume
+                        >= EARLY_MIN_VOLUME
+                        and buys
+                        >= EARLY_MIN_BUYS
                     ):
-                        volume_growth = (
-                            calculate_volume_acceleration(
-                                token,
-                                volume
-                            )
-                        )
                         social_score = (
                             calculate_social_score(
                                 token,
@@ -500,8 +537,10 @@ async def scanner_loop(app):
                             )
                         )
                         if (
-                            social_score >= EARLY_ALERT_SCORE
-                            and token not in early_alerted
+                            social_score
+                            >= EARLY_ALERT_SCORE
+                            and token
+                            not in early_alerted
                         ):
                             early_alerted.add(token)
                             logger.info(
@@ -516,8 +555,12 @@ async def scanner_loop(app):
                                         f"🚀 EARLY SIGNAL\n\n"
                                         f"Token: {token}\n"
                                         f"Score: {social_score}\n"
-                                        f"Liquidity: ${liquidity:,.0f}\n"
-                                        f"Volume Growth: {volume_growth:.2f}x"
+                                        f"Liquidity: "
+                                        f"${liquidity:,.0f}\n"
+                                        f"Volume Growth: "
+                                        f"{volume_growth:.2f}x\n"
+                                        f"Age: "
+                                        f"{age_minutes:.1f}m"
                                     )
                                 )
                             except Exception as e:
@@ -529,8 +572,6 @@ async def scanner_loop(app):
                     # =====================================
                     if liquidity < MIN_LIQUIDITY:
                         continue
-                    if liquidity > MAX_LIQUIDITY:
-                        continue
                     if volume < MIN_VOLUME_24H:
                         continue
                     if buys < MIN_BUYS:
@@ -541,12 +582,6 @@ async def scanner_loop(app):
                     dominance = buys / max(sells, 1)
                     if dominance < MIN_BUY_DOMINANCE:
                         continue
-                    volume_growth = (
-                        calculate_volume_acceleration(
-                            token,
-                            volume
-                        )
-                    )
                     social_score = (
                         calculate_social_score(
                             token,
@@ -613,7 +648,9 @@ async def scanner_loop(app):
                                     f"Volume: "
                                     f"${volume:,.0f}\n"
                                     f"Volume Growth: "
-                                    f"{volume_growth:.2f}x"
+                                    f"{volume_growth:.2f}x\n"
+                                    f"Age: "
+                                    f"{age_minutes:.1f}m"
                                 )
                             )
                         except Exception as e:
@@ -634,7 +671,7 @@ async def scanner_loop(app):
 # MAIN
 # =========================================
 async def main():
-    logger.info("🚀 STARTING SAFE MODE V7")
+    logger.info("🚀 STARTING SAFE MODE V7.1")
     app = (
         Application.builder()
         .token(BOT_TOKEN)
