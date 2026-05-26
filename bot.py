@@ -1,6 +1,6 @@
 # =========================================
-# SAFE MODE V8
-# REAL PAPER TRADING ENGINE
+# SAFE MODE V8.2
+# QUALITY FILTER ENGINE
 # =========================================
 
 import asyncio
@@ -37,36 +37,39 @@ SESSION_NAME = "safe_mode_scanner"
 # SAFE ENGINE SETTINGS
 # =========================================
 
-MIN_LIQUIDITY = 4000
+MIN_LIQUIDITY = 18000
 MAX_LIQUIDITY = 250000
 
-MIN_VOLUME_24H = 1200
-MIN_BUYS = 10
+MIN_VOLUME_24H = 3000
+MIN_BUYS = 15
 
-MIN_VOLUME_PER_BUY = 70
+MIN_VOLUME_PER_BUY = 120
 
-MAX_SELL_RATIO = 1.15
-MIN_BUY_DOMINANCE = 1.01
+MAX_SELL_RATIO = 1.05
+MIN_BUY_DOMINANCE = 1.08
 
-MAX_TOKEN_AGE_MINUTES = 60
+MIN_TOKEN_AGE_MINUTES = 3
+MAX_TOKEN_AGE_MINUTES = 45
+
 MAX_ACTIVE_TRADES = 3
 
 # =========================================
 # EARLY ENGINE SETTINGS
 # =========================================
 
-EARLY_MIN_LIQUIDITY = 2500
-EARLY_MIN_VOLUME = 600
-EARLY_MIN_BUYS = 3
+EARLY_MIN_LIQUIDITY = 12000
+EARLY_MIN_VOLUME = 2000
+EARLY_MIN_BUYS = 8
 
-EARLY_ALERT_SCORE = 10
-SAFE_BUY_SCORE = 18
+EARLY_ALERT_SCORE = 12
+SAFE_BUY_SCORE = 25
 
 # =========================================
 # MOMENTUM QUALITY
 # =========================================
 
-MIN_VOLUME_GROWTH = 1.25
+MIN_VOLUME_GROWTH = 1.4
+MAX_VOLUME_GROWTH = 15
 
 # =========================================
 # RISK
@@ -77,6 +80,12 @@ STOP_LOSS = 0.12
 
 TRAILING_TRIGGER = 0.15
 TRAILING_GAP = 0.10
+
+# =========================================
+# TOKEN COOLDOWN
+# =========================================
+
+TRADED_TOKEN_COOLDOWN = 3600
 
 # =========================================
 # LOGGING
@@ -139,6 +148,8 @@ total_pnl = 0
 wins = 0
 losses = 0
 
+recently_traded = {}
+
 # =========================================
 # TARGET GROUPS
 # =========================================
@@ -190,7 +201,7 @@ tg_client = TelegramClient(
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     msg = """
-🤖 SAFE MODE V8
+🤖 SAFE MODE V8.2
 
 /status
 /positions
@@ -207,7 +218,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     msg = f"""
-🚀 SAFE MODE V8
+🚀 SAFE MODE V8.2
 
 Active Trades: {len(active_trades)}
 Closed Trades: {len(closed_trades)}
@@ -281,7 +292,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ) * 100
 
     msg = f"""
-📈 SAFE MODE V8
+📈 SAFE MODE V8.2
 
 Open Trades: {len(active_trades)}
 Closed Trades: {len(closed_trades)}
@@ -517,7 +528,15 @@ async def fetch_pairs():
                                     )
                                 )
 
-                                if token_address:
+                                chain_id = pair.get(
+                                    "chainId",
+                                    ""
+                                )
+
+                                if (
+                                    token_address
+                                    and chain_id == "solana"
+                                ):
 
                                     all_pairs.append({
                                         "tokenAddress":
@@ -583,7 +602,28 @@ async def fetch_pair_data(token):
                 if not pairs:
                     return None
 
-                return pairs[0]
+                sol_pairs = []
+
+                for pair in pairs:
+
+                    if pair.get("chainId") == "solana":
+                        sol_pairs.append(pair)
+
+                if not sol_pairs:
+                    return None
+
+                sol_pairs.sort(
+                    key=lambda x:
+                    float(
+                        x.get(
+                            "liquidity",
+                            {}
+                        ).get("usd", 0)
+                    ),
+                    reverse=True
+                )
+
+                return sol_pairs[0]
 
     except Exception as e:
 
@@ -678,7 +718,7 @@ async def position_manager(app):
 
             remove_tokens = []
 
-            for token, trade in active_trades.items():
+            for token, trade in list(active_trades.items()):
 
                 pair_data = await fetch_pair_data(token)
 
@@ -702,8 +742,6 @@ async def position_manager(app):
                     / trade["entry_price"]
                 )
 
-                # UPDATE HIGH
-
                 if current_price > trade["highest_price"]:
                     trade["highest_price"] = current_price
 
@@ -722,23 +760,11 @@ async def position_manager(app):
 
                 close_reason = None
 
-                # =====================================
-                # TAKE PROFIT
-                # =====================================
-
                 if pnl >= TAKE_PROFIT:
                     close_reason = "TAKE PROFIT"
 
-                # =====================================
-                # STOP LOSS
-                # =====================================
-
                 elif pnl <= -STOP_LOSS:
                     close_reason = "STOP LOSS"
-
-                # =====================================
-                # TRAILING STOP
-                # =====================================
 
                 elif (
                     highest_pnl
@@ -752,13 +778,11 @@ async def position_manager(app):
                     if retrace >= TRAILING_GAP:
                         close_reason = "TRAILING STOP"
 
-                # =====================================
-                # CLOSE TRADE
-                # =====================================
-
                 if close_reason:
 
                     total_pnl += pnl
+
+                    recently_traded[token] = time.time()
 
                     if pnl > 0:
                         wins += 1
@@ -801,7 +825,7 @@ async def position_manager(app):
             for token in remove_tokens:
                 active_trades.pop(token, None)
 
-            await asyncio.sleep(20)
+            await asyncio.sleep(5)
 
         except Exception as e:
 
@@ -809,7 +833,7 @@ async def position_manager(app):
                 f"POSITION MANAGER ERROR: {e}"
             )
 
-            await asyncio.sleep(10)
+            await asyncio.sleep(5)
 
 # =========================================
 # SCANNER LOOP
@@ -850,6 +874,16 @@ async def scanner_loop(app):
 
                     if not token:
                         continue
+
+                    last_trade = recently_traded.get(token)
+
+                    if last_trade:
+
+                        if (
+                            time.time() - last_trade
+                            < TRADED_TOKEN_COOLDOWN
+                        ):
+                            continue
 
                     pair_data = await fetch_pair_data(
                         token
@@ -910,6 +944,12 @@ async def scanner_loop(app):
 
                         if (
                             age_minutes
+                            < MIN_TOKEN_AGE_MINUTES
+                        ):
+                            continue
+
+                        if (
+                            age_minutes
                             > MAX_TOKEN_AGE_MINUTES
                         ):
                             continue
@@ -924,6 +964,12 @@ async def scanner_loop(app):
                     if (
                         volume_growth
                         < MIN_VOLUME_GROWTH
+                    ):
+                        continue
+
+                    if (
+                        volume_growth
+                        > MAX_VOLUME_GROWTH
                     ):
                         continue
 
@@ -1140,7 +1186,7 @@ async def scanner_loop(app):
 
 async def main():
 
-    logger.info("🚀 STARTING SAFE MODE V8")
+    logger.info("🚀 STARTING SAFE MODE V8.2")
 
     app = (
         Application.builder()
