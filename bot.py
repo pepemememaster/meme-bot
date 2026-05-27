@@ -1,6 +1,6 @@
 # =========================================
-# SAFE MODE V8.2
-# QUALITY FILTER ENGINE
+# SAFE MODE V8.3
+# HIGH FREQUENCY MOMENTUM ENGINE
 # =========================================
 
 import asyncio
@@ -10,7 +10,7 @@ import random
 import re
 import sqlite3
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from datetime import datetime
 
 import aiohttp
@@ -37,19 +37,19 @@ SESSION_NAME = "safe_mode_scanner"
 # SAFE ENGINE SETTINGS
 # =========================================
 
-MIN_LIQUIDITY = 18000
+MIN_LIQUIDITY = 12000
 MAX_LIQUIDITY = 250000
 
-MIN_VOLUME_24H = 3000
-MIN_BUYS = 15
+MIN_VOLUME_24H = 2500
+MIN_BUYS = 8
 
-MIN_VOLUME_PER_BUY = 120
+MIN_VOLUME_PER_BUY = 45
 
-MAX_SELL_RATIO = 1.05
-MIN_BUY_DOMINANCE = 1.08
+MAX_SELL_RATIO = 1.20
+MIN_BUY_DOMINANCE = 1.01
 
-MIN_TOKEN_AGE_MINUTES = 3
-MAX_TOKEN_AGE_MINUTES = 45
+MIN_TOKEN_AGE_MINUTES = 1
+MAX_TOKEN_AGE_MINUTES = 90
 
 MAX_ACTIVE_TRADES = 3
 
@@ -57,19 +57,19 @@ MAX_ACTIVE_TRADES = 3
 # EARLY ENGINE SETTINGS
 # =========================================
 
-EARLY_MIN_LIQUIDITY = 12000
-EARLY_MIN_VOLUME = 2000
-EARLY_MIN_BUYS = 8
+EARLY_MIN_LIQUIDITY = 8000
+EARLY_MIN_VOLUME = 1500
+EARLY_MIN_BUYS = 5
 
-EARLY_ALERT_SCORE = 12
-SAFE_BUY_SCORE = 25
+EARLY_ALERT_SCORE = 10
+SAFE_BUY_SCORE = 18
 
 # =========================================
 # MOMENTUM QUALITY
 # =========================================
 
-MIN_VOLUME_GROWTH = 1.4
-MAX_VOLUME_GROWTH = 15
+MIN_VOLUME_GROWTH = 1.08
+MAX_VOLUME_GROWTH = 20
 
 # =========================================
 # RISK
@@ -138,7 +138,9 @@ recent_tokens = []
 mention_cache = defaultdict(int)
 mention_timestamps = defaultdict(list)
 
-volume_history = {}
+volume_history = defaultdict(
+    lambda: deque(maxlen=5)
+)
 
 early_alerted = set()
 
@@ -201,7 +203,7 @@ tg_client = TelegramClient(
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     msg = """
-🤖 SAFE MODE V8.2
+🤖 SAFE MODE V8.3
 
 /status
 /positions
@@ -218,7 +220,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     msg = f"""
-🚀 SAFE MODE V8.2
+🚀 SAFE MODE V8.3
 
 Active Trades: {len(active_trades)}
 Closed Trades: {len(closed_trades)}
@@ -292,7 +294,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ) * 100
 
     msg = f"""
-📈 SAFE MODE V8.2
+📈 SAFE MODE V8.3
 
 Open Trades: {len(active_trades)}
 Closed Trades: {len(closed_trades)}
@@ -310,6 +312,9 @@ Total Mentions:
 
 Early Alerts:
 {len(early_alerted)}
+
+Total Trades:
+{total_trades}
 """
 
     await update.message.reply_text(msg)
@@ -367,7 +372,7 @@ def calculate_x_heat():
     score = 0
 
     for keyword in X_HEAT_KEYWORDS:
-        score += random.randint(0, 2)
+        score += random.randint(0, 1)
 
     return score
 
@@ -392,29 +397,34 @@ def calculate_mention_velocity(token):
 
 def calculate_volume_acceleration(token, current_volume):
 
-    if token not in volume_history:
+    history = volume_history[token]
 
-        volume_history[token] = {
-            "volume": current_volume,
-            "time": time.time()
-        }
+    history.append(current_volume)
 
+    if len(history) < 2:
         return 1
 
-    old_volume = volume_history[token]["volume"]
+    growths = []
 
-    growth = current_volume / max(old_volume, 1)
+    for i in range(1, len(history)):
 
-    volume_history[token] = {
-        "volume": current_volume,
-        "time": time.time()
-    }
+        old = history[i - 1]
+        new = history[i]
 
-    return growth
+        growth = new / max(old, 1)
+
+        growths.append(growth)
+
+    avg_growth = sum(growths) / len(growths)
+
+    return avg_growth
 
 # =========================================
 
-def calculate_social_score(token, volume_growth):
+def calculate_social_score(
+    token,
+    volume_growth
+):
 
     mentions = mention_cache[token]
 
@@ -424,18 +434,18 @@ def calculate_social_score(token, volume_growth):
 
     score = 0
 
-    score += mentions * 4
-    score += velocity * 5
+    score += mentions * 5
+    score += velocity * 4
     score += x_heat
 
-    if volume_growth > 1.5:
+    if volume_growth > 1.10:
+        score += 4
+
+    if volume_growth > 1.25:
         score += 6
 
-    if volume_growth > 2:
-        score += 10
-
-    if volume_growth > 4:
-        score += 14
+    if volume_growth > 1.50:
+        score += 8
 
     return score
 
@@ -482,7 +492,6 @@ async def fetch_pumpfun_tokens():
 async def fetch_pairs():
 
     urls = [
-        "https://api.dexscreener.com/token-profiles/latest/v1",
         "https://api.dexscreener.com/latest/dex/search?q=solana",
     ]
 
@@ -506,42 +515,36 @@ async def fetch_pairs():
 
                         data = await response.json()
 
-                        if isinstance(data, list):
+                        pairs = data.get(
+                            "pairs",
+                            []
+                        )
 
-                            all_pairs.extend(data)
+                        for pair in pairs:
 
-                        elif isinstance(data, dict):
-
-                            pairs = data.get(
-                                "pairs",
-                                []
+                            token_address = (
+                                pair.get(
+                                    "baseToken",
+                                    {}
+                                ).get(
+                                    "address"
+                                )
                             )
 
-                            for pair in pairs:
+                            chain_id = pair.get(
+                                "chainId",
+                                ""
+                            )
 
-                                token_address = (
-                                    pair.get(
-                                        "baseToken",
-                                        {}
-                                    ).get(
-                                        "address"
-                                    )
-                                )
+                            if (
+                                token_address
+                                and chain_id == "solana"
+                            ):
 
-                                chain_id = pair.get(
-                                    "chainId",
-                                    ""
-                                )
-
-                                if (
-                                    token_address
-                                    and chain_id == "solana"
-                                ):
-
-                                    all_pairs.append({
-                                        "tokenAddress":
-                                            token_address
-                                    })
+                                all_pairs.append({
+                                    "tokenAddress":
+                                        token_address
+                                })
 
                 except Exception as e:
 
@@ -766,10 +769,7 @@ async def position_manager(app):
                 elif pnl <= -STOP_LOSS:
                     close_reason = "STOP LOSS"
 
-                elif (
-                    highest_pnl
-                    >= TRAILING_TRIGGER
-                ):
+                elif highest_pnl >= TRAILING_TRIGGER:
 
                     retrace = (
                         highest_pnl - pnl
@@ -983,6 +983,9 @@ async def scanner_loop(app):
                     ):
                         continue
 
+                    if sells > buys * 1.5:
+                        continue
+
                     # =====================================
                     # EARLY ENGINE
                     # =====================================
@@ -1186,7 +1189,7 @@ async def scanner_loop(app):
 
 async def main():
 
-    logger.info("🚀 STARTING SAFE MODE V8.2")
+    logger.info("🚀 STARTING SAFE MODE V8.3")
 
     app = (
         Application.builder()
